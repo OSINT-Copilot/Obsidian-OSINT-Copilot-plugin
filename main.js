@@ -101141,6 +101141,123 @@ function splitCliArgsLine(line) {
   return s.split(/\s+/).filter(Boolean);
 }
 
+// src/utils/resolve-binary-path.ts
+var loginShellPathDirsPromise = null;
+var loginShellPathDirsFailedAt = null;
+var FAILED_PROBE_RETRY_COOLDOWN_MS = 5 * 6e4;
+function getLoginShellPathDirs(timeoutMs) {
+  const cooledDown = loginShellPathDirsFailedAt !== null && Date.now() - loginShellPathDirsFailedAt >= FAILED_PROBE_RETRY_COOLDOWN_MS;
+  if (loginShellPathDirsPromise && !cooledDown)
+    return loginShellPathDirsPromise;
+  const probe = new Promise((resolve) => {
+    if (process.platform === "win32") {
+      resolve([]);
+      return;
+    }
+    try {
+      const { execFile: execFile2 } = require("child_process");
+      const path = require("path");
+      const shell = process.env.SHELL || "/bin/bash";
+      const startMarker = "===OSINT_COPILOT_PATH_START===";
+      const endMarker = "===OSINT_COPILOT_PATH_END===";
+      execFile2(shell, ["-ilc", `echo "${startMarker}$PATH${endMarker}"`], { timeout: timeoutMs }, (error, stdout) => {
+        if (error || !stdout) {
+          resolve([]);
+          return;
+        }
+        const match = stdout.match(new RegExp(`${startMarker}([\\s\\S]*?)${endMarker}`));
+        if (!match) {
+          resolve([]);
+          return;
+        }
+        resolve(match[1].trim().split(path.delimiter).filter(Boolean));
+      });
+    } catch {
+      resolve([]);
+    }
+  });
+  loginShellPathDirsPromise = probe;
+  loginShellPathDirsFailedAt = null;
+  probe.then((dirs) => {
+    if (dirs.length === 0 && process.platform !== "win32")
+      loginShellPathDirsFailedAt = Date.now();
+  });
+  return probe;
+}
+function platformExecutableCandidates(basePath) {
+  if (process.platform !== "win32")
+    return [basePath];
+  return [`${basePath}.cmd`, `${basePath}.exe`, basePath];
+}
+function defaultCandidatePaths(binaryName) {
+  const os = require("os");
+  const path = require("path");
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    return [
+      path.join(process.env.LOCALAPPDATA || "", "Programs", binaryName, `${binaryName}.exe`),
+      path.join(process.env.APPDATA || "", "npm", `${binaryName}.cmd`)
+    ];
+  }
+  return [
+    path.join(home, ".local/bin", binaryName),
+    "/usr/local/bin/" + binaryName,
+    "/opt/homebrew/bin/" + binaryName,
+    "/usr/bin/" + binaryName
+  ];
+}
+function isExecutableFile(fs, candidate) {
+  try {
+    if (!fs.statSync(candidate).isFile())
+      return false;
+    if (process.platform === "win32")
+      return true;
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function resolveExistingPath(binaryName, extraCandidates, probeTimeoutMs) {
+  const fs = require("fs");
+  const candidates = [...extraCandidates, ...defaultCandidatePaths(binaryName)];
+  for (const candidate of candidates) {
+    if (candidate && isExecutableFile(fs, candidate))
+      return candidate;
+  }
+  try {
+    const path = require("path");
+    const dirs = await getLoginShellPathDirs(probeTimeoutMs);
+    for (const dir of dirs) {
+      const full = path.join(dir, binaryName);
+      if (isExecutableFile(fs, full))
+        return full;
+    }
+  } catch {
+  }
+  return binaryName;
+}
+var resolvedPathCache = /* @__PURE__ */ new Map();
+async function resolveCliPath(configuredValue, fallbackBareName, extraCandidates = [], probeTimeoutMs = 5e3) {
+  const configured = configuredValue?.trim() || fallbackBareName;
+  if (configured.includes("/") || configured.includes("\\"))
+    return configured;
+  const cacheKey = `${configured} ${extraCandidates.join(" ")}`;
+  const cached = resolvedPathCache.get(cacheKey);
+  if (cached)
+    return cached;
+  const resolved = await resolveExistingPath(configured, extraCandidates, probeTimeoutMs);
+  if (resolved !== configured)
+    resolvedPathCache.set(cacheKey, resolved);
+  return resolved;
+}
+function buildCliNotFoundMessage(displayName, triedPath, configuredValue, settingLabel) {
+  const whichCommand = process.platform === "win32" ? "where" : "which";
+  const wasExplicitPath = configuredValue.includes("/") || configuredValue.includes("\\");
+  const searchDescription = wasExplicitPath ? `tried "${triedPath}", the exact path configured` : `tried "${triedPath}", including common install locations and your shell PATH`;
+  return `${displayName} CLI not found (${searchDescription}). If it's installed, set "${settingLabel}" in Settings to its full path (run '${whichCommand} ${configuredValue}' in your terminal to find it).`;
+}
+
 // src/services/claude-code-service.ts
 var DEFAULT_CONFIG = {
   cliPath: "claude",
@@ -101160,6 +101277,10 @@ var ClaudeCodeService = class {
   constructor(pluginDir, config) {
     this.providerId = "claude-code";
     this.displayName = "Claude Code";
+    /** Exact Settings field label for this CLI's path, referenced in "not found" error messages. */
+    this.cliPathSettingLabel = "Claude CLI path";
+    /** Bare binary name to resolve when config.cliPath is empty/whitespace. */
+    this.defaultCliName = "claude";
     /** When set, tried first for graph extraction skill (vault-editable). */
     this.vaultSkillResolver = null;
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -101170,6 +101291,28 @@ var ClaudeCodeService = class {
   }
   updateConfig(config) {
     Object.assign(this.config, config);
+  }
+  /** Extra binary-specific locations beyond resolveCliPath's generic candidate list. */
+  cliCandidatePaths(configuredName) {
+    const os = require("os");
+    const path = require("path");
+    const home = os.homedir();
+    return [
+      path.join(home, ".claude/local", configuredName),
+      path.join(home, ".npm-global/bin", configuredName),
+      path.join(home, ".volta/bin", configuredName)
+    ].flatMap(platformExecutableCandidates);
+  }
+  /**
+   * Resolves `config.cliPath` to a real executable path, working around Obsidian's (Electron's)
+   * process PATH commonly missing the login shell's additions -- see resolve-binary-path.ts,
+   * which also memoizes this so repeated calls (this service is re-constructed on every
+   * settings save) don't re-probe every time.
+   */
+  getResolvedCliPath() {
+    const fallback = this.defaultCliName;
+    const configuredName = this.config.cliPath?.trim() || fallback;
+    return resolveCliPath(this.config.cliPath, fallback, this.cliCandidatePaths(configuredName));
   }
   /** Build argv for one prompt. Subclasses can adapt another CLI while reusing extraction/parsing. */
   buildCliArgs(maxTurns, extra, _imagePaths) {
@@ -101280,18 +101423,21 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       return { success: false, error: err.message || String(err) };
     }
   }
-  invokeCLI(prompt, signal, maxTurns = 1, logOptions, imagePaths = []) {
+  async invokeCLI(prompt, signal, maxTurns = 1, logOptions, imagePaths = []) {
+    if (signal?.aborted) {
+      logOptions?.emit?.({
+        phase: "invoke_aborted",
+        level: "warn",
+        message: "CLI invocation skipped because request is already aborted",
+        timestamp: Date.now()
+      });
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const cliPath = await this.getResolvedCliPath();
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
     return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        logOptions?.emit?.({
-          phase: "invoke_aborted",
-          level: "warn",
-          message: "CLI invocation skipped because request is already aborted",
-          timestamp: Date.now()
-        });
-        reject(new DOMException("Aborted", "AbortError"));
-        return;
-      }
       const { execFile: execFile2 } = require("child_process");
       let killedByAbortSignal = false;
       let onAbort = null;
@@ -101308,12 +101454,12 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       logOptions?.emit?.({
         phase: "invoke_start",
         level: "info",
-        message: `Running ${this.displayName}: ${this.config.cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ""}`,
+        message: `Running ${this.displayName}: ${cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ""}`,
         details: cwd ? `cwd=${cwd}` : "cwd=(default)",
         timestamp: Date.now()
       });
       const child = execFile2(
-        this.config.cliPath,
+        cliPath,
         args,
         {
           timeout: this.config.timeoutMs,
@@ -101338,6 +101484,22 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                 timestamp: Date.now()
               });
               reject(new DOMException("Aborted", "AbortError"));
+            } else if (error.code === "ENOENT") {
+              const message = buildCliNotFoundMessage(
+                this.displayName,
+                cliPath,
+                this.config.cliPath?.trim() || this.defaultCliName,
+                this.cliPathSettingLabel
+              );
+              logOptions?.emit?.({
+                phase: "invoke_error",
+                level: "error",
+                message: `${this.displayName} CLI not found`,
+                details: message,
+                timestamp: Date.now()
+              });
+              console.error(`[${this.displayName}] CLI not found`, { triedPath: cliPath });
+              reject(new Error(message));
             } else {
               const combined = [errOut, stdOut].filter(Boolean).join("\n");
               const timedOut = error.killed || error.signal === "SIGTERM";
@@ -101515,20 +101677,25 @@ Return ONLY the extracted information as plain text. No markdown formatting, no 
     }, [absolutePath]);
   }
   async isAvailable() {
-    return new Promise((resolve) => {
-      try {
-        const { execFile: execFile2 } = require("child_process");
-        const cwd = this.config.cliWorkingDirectory?.trim();
-        execFile2(this.config.cliPath, ["--version"], {
-          timeout: 5e3,
-          ...cwd ? { cwd } : {}
-        }, (error) => {
-          resolve(!error);
-        });
-      } catch {
-        resolve(false);
-      }
-    });
+    try {
+      const cliPath = await this.getResolvedCliPath();
+      return await new Promise((resolve) => {
+        try {
+          const { execFile: execFile2 } = require("child_process");
+          const cwd = this.config.cliWorkingDirectory?.trim();
+          execFile2(cliPath, ["--version"], {
+            timeout: 5e3,
+            ...cwd ? { cwd } : {}
+          }, (error) => {
+            resolve(!error);
+          });
+        } catch {
+          resolve(false);
+        }
+      });
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -101598,6 +101765,22 @@ var CodexCliService = class extends ClaudeCodeService {
     });
     this.providerId = "codex";
     this.displayName = "Codex CLI";
+    this.cliPathSettingLabel = "Codex CLI path";
+    this.defaultCliName = "codex";
+  }
+  /**
+   * The base class's extra candidates include `~/.claude/local` -- Claude Code's own install
+   * location, meaningless for Codex. Keep the generic npm/volta locations (Codex is commonly
+   * installed the same ways) but drop the Claude-specific one.
+   */
+  cliCandidatePaths(configuredName) {
+    const os = require("os");
+    const path = require("path");
+    const home = os.homedir();
+    return [
+      path.join(home, ".npm-global/bin", configuredName),
+      path.join(home, ".volta/bin", configuredName)
+    ].flatMap(platformExecutableCandidates);
   }
   buildCliArgs(_maxTurns, extra, imagePaths) {
     validateExtraArgs(extra);
@@ -101633,11 +101816,20 @@ var CodexCliService = class extends ClaudeCodeService {
   }
   /** Query saved Codex authentication without starting a model request or exposing credentials. */
   async getLoginStatus() {
+    let cliPath;
+    try {
+      cliPath = await this.getResolvedCliPath();
+    } catch (error) {
+      return {
+        authenticated: false,
+        message: error instanceof Error ? error.message : String(error)
+      };
+    }
     return new Promise((resolve) => {
       try {
         const { execFile: execFile2 } = require("child_process");
         execFile2(
-          this.config.cliPath,
+          cliPath,
           ["login", "status"],
           {
             encoding: "utf8",
@@ -111715,14 +111907,25 @@ ${user}`;
     onProgress?.("Parsing agent response...", 85);
     return parseAgentTurnResult(stdout, "hermes-agent");
   }
-  invokeHermes(prompt, args, signal) {
+  async invokeHermes(prompt, args, signal) {
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const cliPath = await resolveCliPath(this.cfg.cliPath, "hermes");
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
     return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new DOMException("Aborted", "AbortError"));
-        return;
-      }
+      let settled = false;
+      let onAbort = null;
+      const rejectOnce = (err) => {
+        if (settled)
+          return;
+        settled = true;
+        reject(err);
+      };
       const child = (0, import_child_process.execFile)(
-        this.cfg.cliPath || "hermes",
+        cliPath,
         args,
         {
           encoding: "utf8",
@@ -111731,10 +111934,22 @@ ${user}`;
           env: { ...process.env, NO_COLOR: "1" }
         },
         (error, stdout, stderr) => {
+          if (signal && onAbort)
+            signal.removeEventListener("abort", onAbort);
+          if (settled)
+            return;
+          settled = true;
           if (error) {
             const anyErr = error;
             if (anyErr.killed || anyErr.signal === "SIGTERM") {
               reject(new DOMException("Aborted", "AbortError"));
+            } else if (anyErr.code === "ENOENT") {
+              reject(new Error(buildCliNotFoundMessage(
+                "Hermes/custom",
+                cliPath,
+                this.cfg.cliPath?.trim() || "hermes",
+                this.cfg.settingLabel
+              )));
             } else {
               reject(
                 new Error(
@@ -111747,22 +111962,40 @@ ${user}`;
           resolve(stdout || "");
         }
       );
-      child.stdin?.write(prompt);
-      child.stdin?.end();
+      const stdin = child.stdin;
+      if (stdin) {
+        stdin.on("error", (stdinError) => {
+          if (stdinError.code === "EPIPE" || settled || child.killed)
+            return;
+          child.kill("SIGTERM");
+          rejectOnce(new Error(`Hermes CLI stdin error: ${stdinError.message}`));
+        });
+        try {
+          stdin.write(prompt);
+          stdin.end();
+        } catch (stdinError) {
+          child.kill("SIGTERM");
+          const message = stdinError instanceof Error ? stdinError.message : String(stdinError);
+          rejectOnce(new Error(`Hermes CLI stdin error: ${message}`));
+        }
+      }
       if (signal) {
-        const onAbort = () => {
+        onAbort = () => {
           child.kill("SIGTERM");
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted)
+          onAbort();
       }
     });
   }
   async healthCheck() {
     const args = splitCliArgsLine(this.cfg.healthCheckArgs);
+    const cliPath = await resolveCliPath(this.cfg.cliPath, "hermes");
     try {
       await new Promise((resolve, reject) => {
         (0, import_child_process.execFile)(
-          this.cfg.cliPath || "hermes",
+          cliPath,
           args.length ? args : ["--version"],
           {
             encoding: "utf8",
@@ -111783,7 +112016,7 @@ ${user}`;
       try {
         await new Promise((resolve, reject) => {
           (0, import_child_process.execFile)(
-            this.cfg.cliPath || "hermes",
+            cliPath,
             ["-h"],
             {
               encoding: "utf8",
@@ -111886,7 +112119,8 @@ function createAgentProvider(plugin, runtimeId) {
       cliPath: s.hermesAgentCliPath || "hermes",
       extraArgs: s.hermesAgentExtraArgs || "",
       timeoutMs: s.hermesAgentTimeoutMs ?? 12e4,
-      healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version"
+      healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version",
+      settingLabel: "Hermes CLI path"
     });
   }
   if (selected !== CLAUDE_RUNTIME_ID) {
@@ -111896,7 +112130,8 @@ function createAgentProvider(plugin, runtimeId) {
         cliPath: custom.cliPath || "hermes",
         extraArgs: custom.extraArgs || "",
         timeoutMs: custom.timeoutMs ?? 12e4,
-        healthCheckArgs: custom.healthCheckArgs || "--version"
+        healthCheckArgs: custom.healthCheckArgs || "--version",
+        settingLabel: "CLI path"
       });
     }
   }

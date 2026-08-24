@@ -17,6 +17,7 @@ export function createAgentProvider(plugin: VaultAIPlugin, runtimeId?: string): 
             extraArgs: s.hermesAgentExtraArgs || '',
             timeoutMs: s.hermesAgentTimeoutMs ?? 120_000,
             healthCheckArgs: s.hermesAgentHealthCheckArgs || '--version',
+            settingLabel: 'Hermes CLI path',
         });
     }
     if (selected !== CLAUDE_RUNTIME_ID) {
@@ -27,6 +28,7 @@ export function createAgentProvider(plugin: VaultAIPlugin, runtimeId?: string): 
                 extraArgs: custom.extraArgs || '',
                 timeoutMs: custom.timeoutMs ?? 120_000,
                 healthCheckArgs: custom.healthCheckArgs || '--version',
+                settingLabel: 'CLI path',
             });
         }
     }

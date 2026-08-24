@@ -3,6 +3,7 @@ import { buildUnifiedAgentSystemPrompt, buildUnifiedAgentUserPrompt } from './bu
 import { parseAgentTurnResult } from './parse-agent-turn-json';
 import type { AgentProvider, AgentTurnContext, AgentTurnResult } from './provider-types';
 import { splitCliArgsLine } from './cli-args';
+import { resolveCliPath, buildCliNotFoundMessage } from '../../utils/resolve-binary-path';
 
 export interface HermesAgentRuntimeConfig {
     cliPath: string;
@@ -11,6 +12,12 @@ export interface HermesAgentRuntimeConfig {
     timeoutMs: number;
     /** argv tokens for health check (default asks for --version). */
     healthCheckArgs: string;
+    /**
+     * Exact Settings field label for cliPath, referenced in "not found" error messages. This
+     * class backs both the built-in Hermes runtime ("Hermes CLI path") and any custom runtime
+     * ("CLI path") -- the two have different field names, so the caller must say which.
+     */
+    settingLabel: string;
 }
 
 export class HermesAgentProvider implements AgentProvider {
@@ -34,14 +41,28 @@ export class HermesAgentProvider implements AgentProvider {
         return parseAgentTurnResult(stdout, 'hermes-agent');
     }
 
-    private invokeHermes(prompt: string, args: string[], signal: AbortSignal | undefined): Promise<string> {
+    private async invokeHermes(prompt: string, args: string[], signal: AbortSignal | undefined): Promise<string> {
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+        }
+        const cliPath = await resolveCliPath(this.cfg.cliPath, 'hermes');
+        // Resolution above can take a few seconds (login shell PATH probe) -- re-check in case
+        // the signal fired while we were awaiting it, before the abort listener below existed
+        // to catch it.
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+        }
         return new Promise((resolve, reject) => {
-            if (signal?.aborted) {
-                reject(new DOMException('Aborted', 'AbortError'));
-                return;
-            }
+            let settled = false;
+            let onAbort: (() => void) | null = null;
+            const rejectOnce = (err: Error): void => {
+                if (settled) return;
+                settled = true;
+                reject(err);
+            };
+
             const child = execFile(
-                this.cfg.cliPath || 'hermes',
+                cliPath,
                 args,
                 {
                     encoding: 'utf8',
@@ -50,10 +71,20 @@ export class HermesAgentProvider implements AgentProvider {
                     env: { ...process.env, NO_COLOR: '1' },
                 },
                 (error: Error | null, stdout: string, stderr: string) => {
+                    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+                    if (settled) return;
+                    settled = true;
                     if (error) {
                         const anyErr = error as { killed?: boolean; signal?: string; code?: string | number | null };
                         if (anyErr.killed || anyErr.signal === 'SIGTERM') {
                             reject(new DOMException('Aborted', 'AbortError'));
+                        } else if (anyErr.code === 'ENOENT') {
+                            reject(new Error(buildCliNotFoundMessage(
+                                'Hermes/custom',
+                                cliPath,
+                                this.cfg.cliPath?.trim() || 'hermes',
+                                this.cfg.settingLabel,
+                            )));
                         } else {
                             reject(
                                 new Error(
@@ -66,24 +97,45 @@ export class HermesAgentProvider implements AgentProvider {
                     resolve(stdout || '');
                 },
             );
-            child.stdin?.write(prompt);
-            child.stdin?.end();
+
+            const stdin = child.stdin;
+            if (stdin) {
+                // A CLI can reject argv and exit before a large prompt is written. Without an
+                // error listener Node treats the resulting EPIPE as an uncaught exception,
+                // crashing the Obsidian renderer -- the same fix already applied to
+                // ClaudeCodeService.invokeCLI.
+                stdin.on('error', (stdinError: NodeJS.ErrnoException) => {
+                    if (stdinError.code === 'EPIPE' || settled || child.killed) return;
+                    child.kill('SIGTERM');
+                    rejectOnce(new Error(`Hermes CLI stdin error: ${stdinError.message}`));
+                });
+                try {
+                    stdin.write(prompt);
+                    stdin.end();
+                } catch (stdinError) {
+                    child.kill('SIGTERM');
+                    const message = stdinError instanceof Error ? stdinError.message : String(stdinError);
+                    rejectOnce(new Error(`Hermes CLI stdin error: ${message}`));
+                }
+            }
 
             if (signal) {
-                const onAbort = () => {
+                onAbort = () => {
                     child.kill('SIGTERM');
                 };
                 signal.addEventListener('abort', onAbort, { once: true });
+                if (signal.aborted) onAbort();
             }
         });
     }
 
     async healthCheck(): Promise<boolean> {
         const args = splitCliArgsLine(this.cfg.healthCheckArgs);
+        const cliPath = await resolveCliPath(this.cfg.cliPath, 'hermes');
         try {
             await new Promise<void>((resolve, reject) => {
                 execFile(
-                    this.cfg.cliPath || 'hermes',
+                    cliPath,
                     args.length ? args : ['--version'],
                     {
                         encoding: 'utf8',
@@ -102,7 +154,7 @@ export class HermesAgentProvider implements AgentProvider {
             try {
                 await new Promise<void>((resolve, reject) => {
                     execFile(
-                        this.cfg.cliPath || 'hermes',
+                        cliPath,
                         ['-h'],
                         {
                             encoding: 'utf8',

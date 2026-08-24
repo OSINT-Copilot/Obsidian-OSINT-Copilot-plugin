@@ -1,5 +1,6 @@
 import { Entity, ProcessTextResponse, AIOperation, type OsintSourceInput } from '../entities/types';
 import { splitCliArgsLine } from './agent-runtime/cli-args';
+import { resolveCliPath, buildCliNotFoundMessage, platformExecutableCandidates } from '../utils/resolve-binary-path';
 
 export interface ClaudeCodeConfig {
     cliPath: string;
@@ -95,6 +96,10 @@ export function sanitizeCliOutput(text: string, maxLen = 500): string {
 export class ClaudeCodeService implements LocalCliService {
     readonly providerId: string = 'claude-code';
     readonly displayName: string = 'Claude Code';
+    /** Exact Settings field label for this CLI's path, referenced in "not found" error messages. */
+    protected readonly cliPathSettingLabel: string = 'Claude CLI path';
+    /** Bare binary name to resolve when config.cliPath is empty/whitespace. */
+    protected readonly defaultCliName: string = 'claude';
     protected config: ClaudeCodeConfig;
     private pluginDir: string;
     /** When set, tried first for graph extraction skill (vault-editable). */
@@ -111,6 +116,33 @@ export class ClaudeCodeService implements LocalCliService {
 
     updateConfig(config: Partial<ClaudeCodeConfig>) {
         Object.assign(this.config, config);
+    }
+
+    /** Extra binary-specific locations beyond resolveCliPath's generic candidate list. */
+    protected cliCandidatePaths(configuredName: string): string[] {
+        const os = require('os') as typeof import('os');
+        const path = require('path') as typeof import('path');
+        const home = os.homedir();
+        return [
+            path.join(home, '.claude/local', configuredName),
+            path.join(home, '.npm-global/bin', configuredName),
+            path.join(home, '.volta/bin', configuredName),
+        ].flatMap(platformExecutableCandidates);
+    }
+
+    /**
+     * Resolves `config.cliPath` to a real executable path, working around Obsidian's (Electron's)
+     * process PATH commonly missing the login shell's additions -- see resolve-binary-path.ts,
+     * which also memoizes this so repeated calls (this service is re-constructed on every
+     * settings save) don't re-probe every time.
+     */
+    protected getResolvedCliPath(): Promise<string> {
+        const fallback = this.defaultCliName;
+        // Trim here too: resolveCliPath trims internally for its own comparisons, but
+        // cliCandidatePaths builds filesystem paths directly from this value, and stray
+        // whitespace in the setting would otherwise make every candidate malformed.
+        const configuredName = this.config.cliPath?.trim() || fallback;
+        return resolveCliPath(this.config.cliPath, fallback, this.cliCandidatePaths(configuredName));
     }
 
     /** Build argv for one prompt. Subclasses can adapt another CLI while reusing extraction/parsing. */
@@ -235,25 +267,31 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         }
     }
 
-    protected invokeCLI(
+    protected async invokeCLI(
         prompt: string,
         signal?: AbortSignal,
         maxTurns: number = 1,
         logOptions?: ExtractionLogOptions,
         imagePaths: string[] = [],
     ): Promise<string> {
-        return new Promise((resolve, reject) => {
-            if (signal?.aborted) {
-                logOptions?.emit?.({
-                    phase: 'invoke_aborted',
-                    level: 'warn',
-                    message: 'CLI invocation skipped because request is already aborted',
-                    timestamp: Date.now(),
-                });
-                reject(new DOMException('Aborted', 'AbortError'));
-                return;
-            }
+        if (signal?.aborted) {
+            logOptions?.emit?.({
+                phase: 'invoke_aborted',
+                level: 'warn',
+                message: 'CLI invocation skipped because request is already aborted',
+                timestamp: Date.now(),
+            });
+            throw new DOMException('Aborted', 'AbortError');
+        }
 
+        const cliPath = await this.getResolvedCliPath();
+        // Resolution above can take a few seconds (login shell PATH probe) -- re-check in case
+        // the signal fired while we were awaiting it, before we've spawned anything to kill.
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+        }
+
+        return new Promise((resolve, reject) => {
             const { execFile } = require('child_process') as typeof import('child_process');
 
             // Tracks whether *our* AbortSignal triggered the kill, as opposed to execFile's own
@@ -276,12 +314,12 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             logOptions?.emit?.({
                 phase: 'invoke_start',
                 level: 'info',
-                message: `Running ${this.displayName}: ${this.config.cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ''}`,
+                message: `Running ${this.displayName}: ${cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ''}`,
                 details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
                 timestamp: Date.now(),
             });
             const child = execFile(
-                this.config.cliPath,
+                cliPath,
                 args,
                 {
                     timeout: this.config.timeoutMs,
@@ -304,6 +342,26 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                                 timestamp: Date.now(),
                             });
                             reject(new DOMException('Aborted', 'AbortError'));
+                        } else if (error.code === 'ENOENT') {
+                            // Auto-detection in getResolvedCliPath() already tried common install
+                            // locations and the login shell PATH before falling back to this bare
+                            // spawn attempt -- if it still resolves to nothing, only an explicit
+                            // path from the user can fix it.
+                            const message = buildCliNotFoundMessage(
+                                this.displayName,
+                                cliPath,
+                                this.config.cliPath?.trim() || this.defaultCliName,
+                                this.cliPathSettingLabel,
+                            );
+                            logOptions?.emit?.({
+                                phase: 'invoke_error',
+                                level: 'error',
+                                message: `${this.displayName} CLI not found`,
+                                details: message,
+                                timestamp: Date.now(),
+                            });
+                            console.error(`[${this.displayName}] CLI not found`, { triedPath: cliPath });
+                            reject(new Error(message));
                         } else {
                             // Some CLIs print fatal messages on stdout; include both for Obsidian notices and logs.
                             const combined = [errOut, stdOut].filter(Boolean).join('\n');
@@ -509,19 +567,24 @@ Return ONLY the extracted information as plain text. No markdown formatting, no 
     }
 
     async isAvailable(): Promise<boolean> {
-        return new Promise((resolve) => {
-            try {
-                const { execFile } = require('child_process') as typeof import('child_process');
-                const cwd = this.config.cliWorkingDirectory?.trim();
-                execFile(this.config.cliPath, ['--version'], {
-                    timeout: 5000,
-                    ...(cwd ? { cwd } : {}),
-                }, (error: any) => {
-                    resolve(!error);
-                });
-            } catch {
-                resolve(false);
-            }
-        });
+        try {
+            const cliPath = await this.getResolvedCliPath();
+            return await new Promise((resolve) => {
+                try {
+                    const { execFile } = require('child_process') as typeof import('child_process');
+                    const cwd = this.config.cliWorkingDirectory?.trim();
+                    execFile(cliPath, ['--version'], {
+                        timeout: 5000,
+                        ...(cwd ? { cwd } : {}),
+                    }, (error: any) => {
+                        resolve(!error);
+                    });
+                } catch {
+                    resolve(false);
+                }
+            });
+        } catch {
+            return false;
+        }
     }
 }

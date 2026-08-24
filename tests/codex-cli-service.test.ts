@@ -155,6 +155,23 @@ describe('CodexCliService', () => {
         expect(() => service.args([], ['/tmp/diagram.svg'])).toThrow(/Export the image as PNG or JPEG/);
     });
 
+    it('getLoginStatus resolves to an unauthenticated status instead of rejecting when CLI-path resolution itself throws', async () => {
+        class ThrowingResolutionService extends CodexCliService {
+            protected override getResolvedCliPath(): Promise<string> {
+                return Promise.reject(new Error('resolution blew up'));
+            }
+        }
+        const service = new ThrowingResolutionService('');
+
+        // Without the try/catch around `await this.getResolvedCliPath()`, this would reject
+        // instead of resolving -- breaking getLoginStatus's contract of always producing a
+        // CodexLoginStatus, and leaving the Settings "Check login" button stuck on "Checking...".
+        await expect(service.getLoginStatus()).resolves.toEqual({
+            authenticated: false,
+            message: 'resolution blew up',
+        });
+    });
+
     it.each([
         ['--json'],
         ['--sandbox', 'danger-full-access'],

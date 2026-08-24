@@ -53,4 +53,24 @@ describe('ClaudeCodeService extraction logging', () => {
 
     await expect(svc.invokeLargePrompt()).rejects.toThrow(/Claude Code error/);
   });
+
+  it('names the exact displayName and Settings field in the CLI-not-found error', async () => {
+    class ExposedService extends ClaudeCodeService {
+      invokePrompt(): Promise<string> {
+        return this.invokeCLI('hello');
+      }
+    }
+    const svc = new ExposedService('', {
+      cliPath: 'definitely-nonexistent-cli-abc123-not-found',
+      timeoutMs: 5_000,
+    });
+
+    // Regression coverage for the resolveCliPath/buildCliNotFoundMessage wiring itself (not just
+    // the standalone utility): displayName, the bare-name search description, and the
+    // provider-specific cliPathSettingLabel ("Claude CLI path") must all actually reach the
+    // rejected error, not just be defined on the class.
+    await expect(svc.invokePrompt()).rejects.toThrow(
+      /Claude Code CLI not found \(tried "definitely-nonexistent-cli-abc123-not-found", including common install locations and your shell PATH\)\. If it's installed, set "Claude CLI path" in Settings/,
+    );
+  });
 });

@@ -1,5 +1,6 @@
 import { ClaudeCodeService, type ClaudeCodeConfig } from './claude-code-service';
 import { splitCliArgsLine } from './agent-runtime/cli-args';
+import { platformExecutableCandidates } from '../utils/resolve-binary-path';
 
 export interface CodexCliConfig extends ClaudeCodeConfig {}
 
@@ -104,6 +105,8 @@ function hasExternalProviderSelection(extra: string[]): boolean {
 export class CodexCliService extends ClaudeCodeService {
     override readonly providerId: string = 'codex';
     override readonly displayName: string = 'Codex CLI';
+    protected override readonly cliPathSettingLabel: string = 'Codex CLI path';
+    protected override readonly defaultCliName: string = 'codex';
 
     constructor(pluginDir: string, config?: Partial<CodexCliConfig>) {
         super(pluginDir, {
@@ -113,6 +116,21 @@ export class CodexCliService extends ClaudeCodeService {
             timeoutMs: 300_000,
             ...config,
         });
+    }
+
+    /**
+     * The base class's extra candidates include `~/.claude/local` -- Claude Code's own install
+     * location, meaningless for Codex. Keep the generic npm/volta locations (Codex is commonly
+     * installed the same ways) but drop the Claude-specific one.
+     */
+    protected override cliCandidatePaths(configuredName: string): string[] {
+        const os = require('os') as typeof import('os');
+        const path = require('path') as typeof import('path');
+        const home = os.homedir();
+        return [
+            path.join(home, '.npm-global/bin', configuredName),
+            path.join(home, '.volta/bin', configuredName),
+        ].flatMap(platformExecutableCandidates);
     }
 
     protected override buildCliArgs(_maxTurns: number, extra: string[], imagePaths: string[]): string[] {
@@ -147,11 +165,20 @@ export class CodexCliService extends ClaudeCodeService {
 
     /** Query saved Codex authentication without starting a model request or exposing credentials. */
     async getLoginStatus(): Promise<CodexLoginStatus> {
+        let cliPath: string;
+        try {
+            cliPath = await this.getResolvedCliPath();
+        } catch (error) {
+            return {
+                authenticated: false,
+                message: error instanceof Error ? error.message : String(error),
+            };
+        }
         return new Promise((resolve) => {
             try {
                 const { execFile } = require('child_process') as typeof import('child_process');
                 execFile(
-                    this.config.cliPath,
+                    cliPath,
                     ['login', 'status'],
                     {
                         encoding: 'utf8',
