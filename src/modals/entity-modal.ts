@@ -86,6 +86,8 @@ export class EntityCreationModal extends Modal {
     private geocodingService: GeocodingService;
     private geocodeStatusEl: HTMLElement | null = null;
     private geocodeBtn: HTMLButtonElement | null = null;
+    private reverseGeocodeStatusEl: HTMLElement | null = null;
+    private reverseGeocodeBtn: HTMLButtonElement | null = null;
 
     constructor(
         app: App,
@@ -142,6 +144,9 @@ export class EntityCreationModal extends Modal {
             for (const prop of coordinateFields) {
                 this.createPropertyField(formContainer, prop, false);
             }
+
+            // Reverse direction: coordinates known, address unknown (e.g. a pin dropped on the map).
+            this.createReverseGeocodeSection(formContainer);
         }
 
         // Add common properties section
@@ -319,6 +324,125 @@ export class EntityCreationModal extends Modal {
         this.geocodeStatusEl.addClass(`graph_copilot-geocode-status-${type}`);
     }
 
+    /**
+     * Reverse-geocode section: coordinates -> address. Mirrors createGeocodeSection() (the
+     * forward, address -> coordinates direction), reusing the same CSS classes.
+     */
+    private createReverseGeocodeSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'graph_copilot-geocode-section' });
+
+        this.reverseGeocodeBtn = section.createEl('button', {
+            text: 'Find address',
+            cls: 'graph_copilot-geocode-btn'
+        });
+
+        this.reverseGeocodeStatusEl = section.createEl('span', {
+            cls: 'graph_copilot-geocode-status'
+        });
+
+        section.createEl('small', {
+            text: 'Look up the address for these coordinates using OpenStreetMap',
+            cls: 'graph_copilot-geocode-help'
+        });
+
+        this.reverseGeocodeBtn.onclick = async () => {
+            await this.handleReverseGeocode();
+        };
+    }
+
+    /**
+     * Handle the "Find address" button click
+     */
+    private async handleReverseGeocode(): Promise<void> {
+        if (!this.reverseGeocodeBtn || !this.reverseGeocodeStatusEl) return;
+
+        const lat = Number(this.properties.latitude);
+        const lng = Number(this.properties.longitude);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            this.setReverseGeocodeStatus('error', 'Enter or set latitude/longitude first (or right-click the map to place a pin).');
+            return;
+        }
+
+        this.reverseGeocodeBtn.disabled = true;
+        this.reverseGeocodeBtn.textContent = '⏳ looking up...';
+        this.setReverseGeocodeStatus('loading', 'Looking up address...');
+
+        try {
+            const result = await this.geocodingService.reverseGeocodeWithRetry(
+                lat,
+                lng,
+                (attempt, maxAttempts, delaySeconds) => {
+                    this.setReverseGeocodeStatus('loading', `Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+                }
+            );
+
+            // An explicit click means finding the address IS the point -- always overwrite,
+            // unlike the forward geocode's "only fill in blanks" backfill behavior.
+            this.properties.address = result.address;
+            if (result.city) this.properties.city = result.city;
+            if (result.state) this.properties.state = result.state;
+            if (result.country) this.properties.country = result.country;
+            if (result.postalCode) this.properties.postal_code = result.postalCode;
+
+            const setInputValue = (id: string, value: string | undefined) => {
+                if (value === undefined) return;
+                const el = document.getElementById(id) as HTMLInputElement | null;
+                if (el) el.value = value;
+            };
+            setInputValue('entity-address', result.address);
+            setInputValue('entity-city', result.city);
+            setInputValue('entity-state', result.state);
+            setInputValue('entity-country', result.country);
+            setInputValue('entity-postal_code', result.postalCode);
+
+            this.setReverseGeocodeStatus('success', `✓ Found: ${result.address}`);
+
+        } catch (error) {
+            console.error('[EntityModal] Reverse geocoding error:', error);
+
+            if (error instanceof GeocodingError) {
+                switch (error.type) {
+                    case GeocodingErrorType.NotFound:
+                        this.setReverseGeocodeStatus('error', '✗ No address found for these coordinates.');
+                        break;
+                    case GeocodingErrorType.RateLimited:
+                        this.setReverseGeocodeStatus('error', '✗ Too many requests. Please wait a moment and try again.');
+                        break;
+                    case GeocodingErrorType.NetworkError:
+                        this.setReverseGeocodeStatus('error', '✗ Network error. Please check your internet connection.');
+                        break;
+                    case GeocodingErrorType.InvalidInput:
+                        this.setReverseGeocodeStatus('error', '✗ ' + error.message);
+                        break;
+                    default:
+                        this.setReverseGeocodeStatus('error', '✗ Reverse geocoding failed.');
+                }
+            } else {
+                this.setReverseGeocodeStatus('error', '✗ Reverse geocoding failed.');
+            }
+        } finally {
+            if (this.reverseGeocodeBtn) {
+                this.reverseGeocodeBtn.disabled = false;
+                this.reverseGeocodeBtn.textContent = 'Find address';
+            }
+        }
+    }
+
+    /**
+     * Set the reverse-geocode status message with appropriate styling
+     */
+    private setReverseGeocodeStatus(type: 'success' | 'error' | 'loading', message: string): void {
+        if (!this.reverseGeocodeStatusEl) return;
+
+        this.reverseGeocodeStatusEl.textContent = message;
+        this.reverseGeocodeStatusEl.removeClass('graph_copilot-geocode-status-success');
+        this.reverseGeocodeStatusEl.removeClass('graph_copilot-geocode-status-error');
+        this.reverseGeocodeStatusEl.removeClass('graph_copilot-geocode-status-loading');
+
+        this.reverseGeocodeStatusEl.addClass(`graph_copilot-geocode-status-${type}`);
+    }
+
     private createPropertyField(container: HTMLElement, propertyName: string, isRequired: boolean): void {
         const fieldContainer = container.createDiv({ cls: 'graph_copilot-entity-field' });
 
@@ -336,10 +460,21 @@ export class EntityCreationModal extends Modal {
             }) as HTMLTextAreaElement;
             input.rows = 3;
         } else if (propertyName === 'start_date' || propertyName === 'end_date') {
-            // Date-time input for date fields
-            input = fieldContainer.createEl('input', {
-                type: 'datetime-local'
-            }) as HTMLInputElement;
+            // Date-time input, plus a "Now" button so the user isn't forced to type it by hand.
+            const dateRow = fieldContainer.createDiv({ cls: 'graph_copilot-datetime-row' });
+            input = dateRow.createEl('input', { type: 'datetime-local' }) as HTMLInputElement;
+
+            const nowBtn = dateRow.createEl('button', { text: 'Now', cls: 'graph_copilot-now-btn' });
+            nowBtn.type = 'button';
+            nowBtn.title = 'Fill in the current date and time';
+            nowBtn.onclick = () => {
+                const now = new Date();
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const localValue =
+                    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                (input as HTMLInputElement).value = localValue;
+                this.properties[propertyName] = localValue.replace('T', ' ');
+            };
         } else if (propertyName === 'latitude' || propertyName === 'longitude') {
             // Number input for coordinates
             input = fieldContainer.createEl('input', {
@@ -544,7 +679,7 @@ export class EntityCreationModal extends Modal {
     private warnIfMissingDisplayRequirements(entity: Entity): void {
         if (this.entityType === EntityType.Event && !this.properties.start_date) {
             new Notice(
-                `${entity.label} will not appear on the Timeline yet. Edit it to add a start date.`,
+                `${entity.label} has no date yet — it will appear under "Undated" at the top of the Timeline until you add a start date.`,
                 8000
             );
         } else if (

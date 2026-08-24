@@ -98123,6 +98123,14 @@ var GeocodingError = class extends Error {
     this.name = "GeocodingError";
   }
 };
+function extractAddressComponents(address) {
+  return {
+    city: address?.city || address?.town || address?.village || address?.municipality,
+    state: address?.state,
+    country: address?.country,
+    postalCode: address?.postcode
+  };
+}
 var _GeocodingService = class _GeocodingService {
   constructor() {
     // 10 seconds
@@ -98182,6 +98190,48 @@ var _GeocodingService = class _GeocodingService {
     throw new GeocodingError(
       "NETWORK_ERROR" /* NetworkError */,
       `Failed to geocode after ${_GeocodingService.MAX_RETRIES} attempts. Please check your internet connection.`
+    );
+  }
+  /**
+   * Reverse geocode coordinates to a human-readable address, with automatic retry.
+   * Mirrors geocodeAddressWithRetry()'s retry/backoff/error-model conventions. Unlike forward
+   * geocoding there is no fallback query ladder -- a coordinate either resolves or it doesn't --
+   * so NotFound/InvalidInput are not retried.
+   *
+   * @param latitude - Latitude in range -90..90
+   * @param longitude - Longitude in range -180..180
+   * @param onRetry - Optional callback for retry status updates
+   * @returns ReverseGeocodingResult with the resolved address
+   * @throws GeocodingError on failure after all retries
+   */
+  async reverseGeocodeWithRetry(latitude, longitude, onRetry) {
+    let lastError = null;
+    for (let attempt = 0; attempt < _GeocodingService.MAX_RETRIES; attempt++) {
+      try {
+        return await this.reverseGeocode(latitude, longitude);
+      } catch (error) {
+        lastError = error instanceof GeocodingError ? error : new GeocodingError(
+          "UNKNOWN" /* Unknown */,
+          error instanceof Error ? error.message : String(error)
+        );
+        if (lastError.type === "INVALID_INPUT" /* InvalidInput */ || lastError.type === "NOT_FOUND" /* NotFound */) {
+          throw lastError;
+        }
+        if (attempt === _GeocodingService.MAX_RETRIES - 1) {
+          break;
+        }
+        const delayMs = _GeocodingService.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+        const delaySeconds = Math.round(delayMs / 1e3);
+        console.debug(`[GeocodingService] Reverse retry attempt ${attempt + 1}/${_GeocodingService.MAX_RETRIES} after ${delaySeconds}s`);
+        if (onRetry) {
+          onRetry(attempt + 1, _GeocodingService.MAX_RETRIES, delaySeconds);
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw new GeocodingError(
+      "NETWORK_ERROR" /* NetworkError */,
+      `Failed to reverse geocode after ${_GeocodingService.MAX_RETRIES} attempts. Please check your internet connection.`
     );
   }
   /**
@@ -98340,15 +98390,15 @@ var _GeocodingService = class _GeocodingService {
       } else if (result.importance < 0.3) {
         confidence = "low";
       }
-      const cityName = result.address?.city || result.address?.town || result.address?.village || result.address?.municipality;
+      const { city: city2, state: state2, country: country2, postalCode } = extractAddressComponents(result.address);
       return {
         latitude: parseFloat(result.lat),
         longitude: parseFloat(result.lon),
         displayName: result.display_name,
-        city: cityName,
-        state: result.address?.state,
-        country: result.address?.country,
-        postalCode: result.address?.postcode,
+        city: city2,
+        state: state2,
+        country: country2,
+        postalCode,
         confidence
       };
     } catch (error) {
@@ -98356,6 +98406,76 @@ var _GeocodingService = class _GeocodingService {
         throw error;
       }
       console.error("[GeocodingService] Geocoding error:", error);
+      throw new GeocodingError(
+        "NETWORK_ERROR" /* NetworkError */,
+        "Failed to connect to geocoding service. Please check your internet connection."
+      );
+    }
+  }
+  /**
+   * Reverse geocode coordinates to an address via Nominatim's /reverse endpoint.
+   */
+  async reverseGeocode(latitude, longitude) {
+    if (!_GeocodingService.validateCoordinates(latitude, longitude)) {
+      throw new GeocodingError(
+        "INVALID_INPUT" /* InvalidInput */,
+        "Coordinates are out of range (latitude -90..90, longitude -180..180)."
+      );
+    }
+    await this.enforceRateLimit();
+    console.debug("[GeocodingService] Reverse geocoding:", latitude, longitude);
+    try {
+      const url = `${_GeocodingService.NOMINATIM_REVERSE_URL}?` + new URLSearchParams({
+        lat: String(latitude),
+        lon: String(longitude),
+        format: "json",
+        addressdetails: "1"
+      }).toString();
+      const response = await (0, import_obsidian.requestUrl)({
+        url,
+        method: "GET",
+        headers: {
+          "User-Agent": _GeocodingService.USER_AGENT,
+          "Accept": "application/json"
+        },
+        throw: false
+      });
+      this.lastRequestTime = Date.now();
+      if (response.status === 429) {
+        throw new GeocodingError(
+          "RATE_LIMITED" /* RateLimited */,
+          "Too many requests. Please wait a moment and try again."
+        );
+      }
+      if (response.status !== 200) {
+        throw new GeocodingError(
+          "NETWORK_ERROR" /* NetworkError */,
+          `Reverse geocoding request failed with status ${response.status}`
+        );
+      }
+      const result = response.json;
+      if (!result || result.error || !result.address) {
+        throw new GeocodingError(
+          "NOT_FOUND" /* NotFound */,
+          "No address found for these coordinates."
+        );
+      }
+      console.debug("[GeocodingService] Reverse geocoding result:", result);
+      const { city, state, country, postalCode } = extractAddressComponents(result.address);
+      const streetAddress = [result.address?.house_number, result.address?.road].filter(Boolean).join(" ").trim();
+      return {
+        address: streetAddress || result.display_name,
+        displayName: result.display_name,
+        city,
+        state,
+        country,
+        postalCode
+      };
+    } catch (error) {
+      if (error instanceof GeocodingError) {
+        throw error;
+      }
+      console.error("[GeocodingService] Reverse geocoding error:", error);
       throw new GeocodingError(
         "NETWORK_ERROR" /* NetworkError */,
         "Failed to connect to geocoding service. Please check your internet connection."
@@ -98388,6 +98508,7 @@ var _GeocodingService = class _GeocodingService {
   }
 };
 _GeocodingService.NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+_GeocodingService.NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 _GeocodingService.USER_AGENT = "OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-plugin)";
 _GeocodingService.REQUEST_TIMEOUT = 1e4;
 _GeocodingService.MIN_REQUEST_INTERVAL = 1100;
@@ -102590,6 +102711,8 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
     this.properties = {};
     this.geocodeStatusEl = null;
     this.geocodeBtn = null;
+    this.reverseGeocodeStatusEl = null;
+    this.reverseGeocodeBtn = null;
     this.entityManager = entityManager;
     this.entityType = entityType;
     this.onEntityCreated = onEntityCreated || null;
@@ -102621,6 +102744,7 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
       for (const prop of coordinateFields) {
         this.createPropertyField(formContainer, prop, false);
       }
+      this.createReverseGeocodeSection(formContainer);
     }
     contentEl.createEl("h4", { text: "Additional properties" });
     const commonContainer = contentEl.createDiv({ cls: "graph_copilot-entity-form" });
@@ -102766,6 +102890,113 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
     this.geocodeStatusEl.removeClass("graph_copilot-geocode-status-loading");
     this.geocodeStatusEl.addClass(`graph_copilot-geocode-status-${type}`);
   }
+  /**
+   * Reverse-geocode section: coordinates -> address. Mirrors createGeocodeSection() (the
+   * forward, address -> coordinates direction), reusing the same CSS classes.
+   */
+  createReverseGeocodeSection(container) {
+    const section = container.createDiv({ cls: "graph_copilot-geocode-section" });
+    this.reverseGeocodeBtn = section.createEl("button", {
+      text: "Find address",
+      cls: "graph_copilot-geocode-btn"
+    });
+    this.reverseGeocodeStatusEl = section.createEl("span", {
+      cls: "graph_copilot-geocode-status"
+    });
+    section.createEl("small", {
+      text: "Look up the address for these coordinates using OpenStreetMap",
+      cls: "graph_copilot-geocode-help"
+    });
+    this.reverseGeocodeBtn.onclick = async () => {
+      await this.handleReverseGeocode();
+    };
+  }
+  /**
+   * Handle the "Find address" button click
+   */
+  async handleReverseGeocode() {
+    if (!this.reverseGeocodeBtn || !this.reverseGeocodeStatusEl)
+      return;
+    const lat = Number(this.properties.latitude);
+    const lng = Number(this.properties.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      this.setReverseGeocodeStatus("error", "Enter or set latitude/longitude first (or right-click the map to place a pin).");
+      return;
+    }
+    this.reverseGeocodeBtn.disabled = true;
+    this.reverseGeocodeBtn.textContent = "\u23F3 looking up...";
+    this.setReverseGeocodeStatus("loading", "Looking up address...");
+    try {
+      const result = await this.geocodingService.reverseGeocodeWithRetry(
+        lat,
+        lng,
+        (attempt, maxAttempts, delaySeconds) => {
+          this.setReverseGeocodeStatus("loading", `Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+        }
+      );
+      this.properties.address = result.address;
+      if (result.city)
+        this.properties.city = result.city;
+      if (result.state)
+        this.properties.state = result.state;
+      if (result.country)
+        this.properties.country = result.country;
+      if (result.postalCode)
+        this.properties.postal_code = result.postalCode;
+      const setInputValue = (id, value) => {
+        if (value === void 0)
+          return;
+        const el = document.getElementById(id);
+        if (el)
+          el.value = value;
+      };
+      setInputValue("entity-address", result.address);
+      setInputValue("entity-city", result.city);
+      setInputValue("entity-state", result.state);
+      setInputValue("entity-country", result.country);
+      setInputValue("entity-postal_code", result.postalCode);
+      this.setReverseGeocodeStatus("success", `\u2713 Found: ${result.address}`);
+    } catch (error) {
+      console.error("[EntityModal] Reverse geocoding error:", error);
+      if (error instanceof GeocodingError) {
+        switch (error.type) {
+          case "NOT_FOUND" /* NotFound */:
+            this.setReverseGeocodeStatus("error", "\u2717 No address found for these coordinates.");
+            break;
+          case "RATE_LIMITED" /* RateLimited */:
+            this.setReverseGeocodeStatus("error", "\u2717 Too many requests. Please wait a moment and try again.");
+            break;
+          case "NETWORK_ERROR" /* NetworkError */:
+            this.setReverseGeocodeStatus("error", "\u2717 Network error. Please check your internet connection.");
+            break;
+          case "INVALID_INPUT" /* InvalidInput */:
+            this.setReverseGeocodeStatus("error", "\u2717 " + error.message);
+            break;
+          default:
+            this.setReverseGeocodeStatus("error", "\u2717 Reverse geocoding failed.");
+        }
+      } else {
+        this.setReverseGeocodeStatus("error", "\u2717 Reverse geocoding failed.");
+      }
+    } finally {
+      if (this.reverseGeocodeBtn) {
+        this.reverseGeocodeBtn.disabled = false;
+        this.reverseGeocodeBtn.textContent = "Find address";
+      }
+    }
+  }
+  /**
+   * Set the reverse-geocode status message with appropriate styling
+   */
+  setReverseGeocodeStatus(type, message) {
+    if (!this.reverseGeocodeStatusEl)
+      return;
+    this.reverseGeocodeStatusEl.textContent = message;
+    this.reverseGeocodeStatusEl.removeClass("graph_copilot-geocode-status-success");
+    this.reverseGeocodeStatusEl.removeClass("graph_copilot-geocode-status-error");
+    this.reverseGeocodeStatusEl.removeClass("graph_copilot-geocode-status-loading");
+    this.reverseGeocodeStatusEl.addClass(`graph_copilot-geocode-status-${type}`);
+  }
   createPropertyField(container, propertyName, isRequired2) {
     const fieldContainer = container.createDiv({ cls: "graph_copilot-entity-field" });
     const label = fieldContainer.createEl("label", {
@@ -102779,9 +103010,18 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
       });
       input.rows = 3;
     } else if (propertyName === "start_date" || propertyName === "end_date") {
-      input = fieldContainer.createEl("input", {
-        type: "datetime-local"
-      });
+      const dateRow = fieldContainer.createDiv({ cls: "graph_copilot-datetime-row" });
+      input = dateRow.createEl("input", { type: "datetime-local" });
+      const nowBtn = dateRow.createEl("button", { text: "Now", cls: "graph_copilot-now-btn" });
+      nowBtn.type = "button";
+      nowBtn.title = "Fill in the current date and time";
+      nowBtn.onclick = () => {
+        const now = /* @__PURE__ */ new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        const localValue = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        input.value = localValue;
+        this.properties[propertyName] = localValue.replace("T", " ");
+      };
     } else if (propertyName === "latitude" || propertyName === "longitude") {
       input = fieldContainer.createEl("input", {
         type: "number",
@@ -102942,7 +103182,7 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
   warnIfMissingDisplayRequirements(entity) {
     if (this.entityType === "Event" /* Event */ && !this.properties.start_date) {
       new import_obsidian8.Notice(
-        `${entity.label} will not appear on the Timeline yet. Edit it to add a start date.`,
+        `${entity.label} has no date yet \u2014 it will appear under "Undated" at the top of the Timeline until you add a start date.`,
         8e3
       );
     } else if (this.entityType === "Location" /* Location */ && (!this.properties.latitude || !this.properties.longitude)) {
@@ -106130,6 +106370,12 @@ function pickFirstTimelineDateProperty(properties) {
   }
   return void 0;
 }
+function sortTimelineEventsForDisplay(events) {
+  const undated = events.filter((e) => e.start === null);
+  const dated = events.filter((e) => e.start !== null);
+  dated.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return [...undated, ...dated];
+}
 var TimelineView = class extends import_obsidian12.ItemView {
   constructor(leaf, entityManager, onEventClick) {
     super(leaf);
@@ -106247,7 +106493,7 @@ var TimelineView = class extends import_obsidian12.ItemView {
       })();
     };
     const filterSpan = toolbar.createEl("span", {
-      text: "Event entities with a parseable date; hidden if \xABadd_to_timeline\xBB is explicitly off. Auto-syncs when notes change.",
+      text: 'All Event entities (dated or not \u2014 undated ones appear under "Undated" at the top); hidden if \xABadd_to_timeline\xBB is explicitly off. Auto-syncs when notes change.',
       cls: "graph_copilot-timeline-info"
     });
     filterSpan.setCssProps({
@@ -106297,8 +106543,6 @@ var TimelineView = class extends import_obsidian12.ItemView {
         continue;
       const startRaw = pickFirstTimelineDateProperty(entity.properties);
       const startDate = this.parseDate(startRaw);
-      if (!startDate)
-        continue;
       const endRaw = typeof entity.properties.end_date === "string" ? entity.properties.end_date : entity.properties.last_seen;
       const endDate = this.parseDate(typeof endRaw === "string" ? endRaw : void 0);
       events.push({
@@ -106309,8 +106553,7 @@ var TimelineView = class extends import_obsidian12.ItemView {
         color: ENTITY_CONFIGS["Event" /* Event */].color
       });
     }
-    events.sort((a, b) => a.start.getTime() - b.start.getTime());
-    return events;
+    return sortTimelineEventsForDisplay(events);
   }
   /**
    * Parse a date string. Supports YYYY-MM-DD HH:mm, YYYY-MM-DD, and standard Date formats.
@@ -106391,8 +106634,37 @@ var TimelineView = class extends import_obsidian12.ItemView {
       background: "var(--interactive-accent)",
       "border-radius": "2px"
     });
+    const undatedCount = this.events.filter((e) => e.start === null).length;
+    const datedCount = this.events.length - undatedCount;
+    if (undatedCount > 0) {
+      this.renderSectionHeader(wrapper, `Undated (${undatedCount})`);
+    }
     this.events.forEach((event, index) => {
+      if (undatedCount > 0 && datedCount > 0 && index === undatedCount) {
+        this.renderSectionDivider(wrapper);
+      }
       this.renderEvent(wrapper, event, index);
+    });
+  }
+  /** Render a section header (e.g. "Undated (3)") above a group of timeline cards. */
+  renderSectionHeader(container, text) {
+    const header = container.createDiv({ cls: "graph_copilot-timeline-section-header" });
+    header.setCssProps({
+      margin: "0 0 15px 0",
+      "font-size": "12px",
+      "font-weight": "600",
+      "text-transform": "uppercase",
+      "letter-spacing": "0.5px",
+      color: "var(--text-muted)"
+    });
+    header.textContent = text;
+  }
+  /** Divider marking the boundary between the undated group and the dated list below it. */
+  renderSectionDivider(container) {
+    const divider = container.createDiv({ cls: "graph_copilot-timeline-section-divider" });
+    divider.setCssProps({
+      margin: "10px 0 25px 0",
+      "border-top": "1px dashed var(--background-modifier-border)"
     });
   }
   /**
@@ -106427,7 +106699,7 @@ var TimelineView = class extends import_obsidian12.ItemView {
       "font-size": "12px",
       color: "var(--text-muted)"
     });
-    dateLabel.textContent = this.formatDate(event.start);
+    dateLabel.textContent = event.start ? this.formatDate(event.start) : "No date";
     const card = eventEl.createDiv({ cls: "graph_copilot-timeline-card" });
     card.setCssProps({
       background: "var(--background-secondary)",
@@ -106490,7 +106762,7 @@ var TimelineView = class extends import_obsidian12.ItemView {
       color: "var(--text-muted)",
       "margin-top": "5px"
     });
-    let timeText = this.formatTime(event.start);
+    let timeText = event.start ? this.formatTime(event.start) : "No date";
     if (event.end) {
       timeText += ` \u2192 ${this.formatTime(event.end)}`;
     }
@@ -108203,7 +108475,7 @@ var _GraphView = class _GraphView extends import_obsidian13.ItemView {
     }
     if (isEventEntityType(entityType)) {
       const entity = this.entityManager.getEntity(entityId);
-      if (entity && pickFirstTimelineDateProperty(entity.properties)) {
+      if (entity) {
         const isOnTimeline = entity.properties.add_to_timeline === true;
         const timelineLabel = isOnTimeline ? "\u{1F4C5} Remove from Timeline" : "\u{1F4C5} Add to Timeline";
         const timelineItem = this.createMenuItem(timelineLabel, () => {

@@ -22,7 +22,7 @@ import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition }
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 import { GRAPH_NODE_POSITIONS_FILE } from '../constants/vault-layout';
 import type { VaultLockService } from '../services/vault-lock-service';
-import { isEventEntityType, pickFirstTimelineDateProperty } from './timeline-view';
+import { isEventEntityType } from './timeline-view';
 
 /** Passed from main — vault lock + graph workspace (multi-graph positions). */
 export interface OSINTCopilotGraphHost {
@@ -2092,10 +2092,10 @@ export class GraphView extends ItemView {
             }
         }
 
-        // Toggle Timeline option (only for Event entities with dates; YAML type may be "event")
+        // Toggle Timeline option (all Event entities; undated ones show under "Undated" too)
         if (isEventEntityType(entityType as string)) {
             const entity = this.entityManager.getEntity(entityId);
-            if (entity && pickFirstTimelineDateProperty(entity.properties as Record<string, unknown>)) {
+            if (entity) {
                 const isOnTimeline = entity.properties.add_to_timeline === true;
                 const timelineLabel = isOnTimeline ? '📅 Remove from Timeline' : '📅 Add to Timeline';
                 const timelineItem = this.createMenuItem(timelineLabel, () => {

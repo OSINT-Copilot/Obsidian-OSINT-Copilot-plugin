@@ -35,12 +35,25 @@ export function pickFirstTimelineDateProperty(properties: Record<string, unknown
     return undefined;
 }
 
-interface TimelineEvent {
+export interface TimelineEvent {
     id: string;
     label: string;
-    start: Date;
+    start: Date | null;
     end?: Date;
     color: string;
+}
+
+/**
+ * Order timeline events for display: entities with no parseable date come first, in their
+ * original (entity-load) order, followed by dated events sorted ascending (oldest first) --
+ * preserving the existing sort behavior for dated events exactly. Exported for direct unit
+ * testing (see tests/timeline-view.test.ts).
+ */
+export function sortTimelineEventsForDisplay(events: TimelineEvent[]): TimelineEvent[] {
+    const undated = events.filter((e) => e.start === null);
+    const dated = events.filter((e): e is TimelineEvent & { start: Date } => e.start !== null);
+    dated.sort((a, b) => a.start.getTime() - b.start.getTime());
+    return [...undated, ...dated];
 }
 
 export class TimelineView extends ItemView {
@@ -184,7 +197,7 @@ export class TimelineView extends ItemView {
 
         // Filter label
         const filterSpan = toolbar.createEl('span', {
-            text: 'Event entities with a parseable date; hidden if «add_to_timeline» is explicitly off. Auto-syncs when notes change.',
+            text: 'All Event entities (dated or not — undated ones appear under "Undated" at the top); hidden if «add_to_timeline» is explicitly off. Auto-syncs when notes change.',
             cls: 'graph_copilot-timeline-info'
         });
         filterSpan.setCssProps({
@@ -243,8 +256,7 @@ export class TimelineView extends ItemView {
             if (isExplicitlyOffTimeline(entity.properties.add_to_timeline)) continue;
 
             const startRaw = pickFirstTimelineDateProperty(entity.properties as Record<string, unknown>);
-            const startDate = this.parseDate(startRaw);
-            if (!startDate) continue;
+            const startDate = this.parseDate(startRaw); // null is kept (shown as undated), not dropped
 
             const endRaw =
                 typeof entity.properties.end_date === 'string' ? entity.properties.end_date : entity.properties.last_seen;
@@ -259,10 +271,7 @@ export class TimelineView extends ItemView {
             });
         }
 
-        // Sort by start date
-        events.sort((a, b) => a.start.getTime() - b.start.getTime());
-
-        return events;
+        return sortTimelineEventsForDisplay(events);
     }
 
     /**
@@ -356,9 +365,44 @@ export class TimelineView extends ItemView {
             'border-radius': '2px'
         });
 
+        // sortTimelineEventsForDisplay() guarantees all undated events occupy indices
+        // [0, undatedCount) at the front of this.events, followed by the dated, sorted group.
+        const undatedCount = this.events.filter((e) => e.start === null).length;
+        const datedCount = this.events.length - undatedCount;
+
+        if (undatedCount > 0) {
+            this.renderSectionHeader(wrapper, `Undated (${undatedCount})`);
+        }
+
         // Render each event
         this.events.forEach((event, index) => {
+            if (undatedCount > 0 && datedCount > 0 && index === undatedCount) {
+                this.renderSectionDivider(wrapper);
+            }
             this.renderEvent(wrapper, event, index);
+        });
+    }
+
+    /** Render a section header (e.g. "Undated (3)") above a group of timeline cards. */
+    private renderSectionHeader(container: HTMLElement, text: string): void {
+        const header = container.createDiv({ cls: 'graph_copilot-timeline-section-header' });
+        header.setCssProps({
+            margin: '0 0 15px 0',
+            'font-size': '12px',
+            'font-weight': '600',
+            'text-transform': 'uppercase',
+            'letter-spacing': '0.5px',
+            color: 'var(--text-muted)'
+        });
+        header.textContent = text;
+    }
+
+    /** Divider marking the boundary between the undated group and the dated list below it. */
+    private renderSectionDivider(container: HTMLElement): void {
+        const divider = container.createDiv({ cls: 'graph_copilot-timeline-section-divider' });
+        divider.setCssProps({
+            margin: '10px 0 25px 0',
+            'border-top': '1px dashed var(--background-modifier-border)'
         });
     }
 
@@ -398,7 +442,7 @@ export class TimelineView extends ItemView {
             'font-size': '12px',
             color: 'var(--text-muted)'
         });
-        dateLabel.textContent = this.formatDate(event.start);
+        dateLabel.textContent = event.start ? this.formatDate(event.start) : 'No date';
 
         // Event card
         const card = eventEl.createDiv({ cls: 'graph_copilot-timeline-card' });
@@ -476,7 +520,7 @@ export class TimelineView extends ItemView {
             'margin-top': '5px'
         });
 
-        let timeText = this.formatTime(event.start);
+        let timeText = event.start ? this.formatTime(event.start) : 'No date';
         if (event.end) {
             timeText += ` → ${this.formatTime(event.end)}`;
         }

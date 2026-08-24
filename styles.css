@@ -1268,6 +1268,35 @@
   margin-right: 8px;
 }
 
+.graph_copilot-datetime-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph_copilot-datetime-row .graph_copilot-entity-input {
+  flex: 1;
+  width: auto;
+}
+
+.graph_copilot-now-btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.graph_copilot-now-btn:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
 .graph_copilot-entity-modal h4 {
   margin-top: 20px;
   margin-bottom: 10px;

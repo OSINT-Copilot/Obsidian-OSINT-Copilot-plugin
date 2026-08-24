@@ -20,6 +20,18 @@ export interface GeocodingResult {
 }
 
 /**
+ * Result from a reverse-geocoding request (coordinates -> address)
+ */
+export interface ReverseGeocodingResult {
+    address: string;
+    displayName: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    postalCode?: string;
+}
+
+/**
  * Error types for geocoding failures
  */
 export enum GeocodingErrorType {
@@ -65,6 +77,36 @@ interface NominatimResult {
 }
 
 /**
+ * Nominatim /reverse response structure. Unlike /search, a no-match is reported as HTTP 200
+ * with an `error` field (no `address`), not an empty array -- must be checked explicitly.
+ */
+interface NominatimReverseResult {
+    lat: string;
+    lon: string;
+    display_name: string;
+    address?: NominatimResult['address'];
+    error?: string;
+}
+
+/**
+ * Extract normalized address components from a Nominatim `address` sub-object. Shared by both
+ * forward (search) and reverse geocoding response handling.
+ */
+export function extractAddressComponents(address?: NominatimResult['address']): {
+    city?: string;
+    state?: string;
+    country?: string;
+    postalCode?: string;
+} {
+    return {
+        city: address?.city || address?.town || address?.village || address?.municipality,
+        state: address?.state,
+        country: address?.country,
+        postalCode: address?.postcode
+    };
+}
+
+/**
  * Callback for retry status updates
  */
 export type RetryStatusCallback = (attempt: number, maxAttempts: number, delaySeconds: number) => void;
@@ -81,6 +123,7 @@ export type RetryStatusCallback = (attempt: number, maxAttempts: number, delaySe
  */
 export class GeocodingService {
     private static readonly NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+    private static readonly NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
     private static readonly USER_AGENT = 'OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-plugin)';
     private static readonly REQUEST_TIMEOUT = 10000; // 10 seconds
 
@@ -168,6 +211,63 @@ export class GeocodingService {
         throw new GeocodingError(
             GeocodingErrorType.NetworkError,
             `Failed to geocode after ${GeocodingService.MAX_RETRIES} attempts. Please check your internet connection.`
+        );
+    }
+
+    /**
+     * Reverse geocode coordinates to a human-readable address, with automatic retry.
+     * Mirrors geocodeAddressWithRetry()'s retry/backoff/error-model conventions. Unlike forward
+     * geocoding there is no fallback query ladder -- a coordinate either resolves or it doesn't --
+     * so NotFound/InvalidInput are not retried.
+     *
+     * @param latitude - Latitude in range -90..90
+     * @param longitude - Longitude in range -180..180
+     * @param onRetry - Optional callback for retry status updates
+     * @returns ReverseGeocodingResult with the resolved address
+     * @throws GeocodingError on failure after all retries
+     */
+    async reverseGeocodeWithRetry(
+        latitude: number,
+        longitude: number,
+        onRetry?: RetryStatusCallback
+    ): Promise<ReverseGeocodingResult> {
+        let lastError: GeocodingError | null = null;
+
+        for (let attempt = 0; attempt < GeocodingService.MAX_RETRIES; attempt++) {
+            try {
+                return await this.reverseGeocode(latitude, longitude);
+            } catch (error) {
+                lastError = error instanceof GeocodingError
+                    ? error
+                    : new GeocodingError(
+                        GeocodingErrorType.Unknown,
+                        error instanceof Error ? error.message : String(error)
+                    );
+
+                if (lastError.type === GeocodingErrorType.InvalidInput || lastError.type === GeocodingErrorType.NotFound) {
+                    throw lastError;
+                }
+
+                if (attempt === GeocodingService.MAX_RETRIES - 1) {
+                    break;
+                }
+
+                const delayMs = GeocodingService.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
+                const delaySeconds = Math.round(delayMs / 1000);
+
+                console.debug(`[GeocodingService] Reverse retry attempt ${attempt + 1}/${GeocodingService.MAX_RETRIES} after ${delaySeconds}s`);
+
+                if (onRetry) {
+                    onRetry(attempt + 1, GeocodingService.MAX_RETRIES, delaySeconds);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+
+        throw new GeocodingError(
+            GeocodingErrorType.NetworkError,
+            `Failed to reverse geocode after ${GeocodingService.MAX_RETRIES} attempts. Please check your internet connection.`
         );
     }
 
@@ -382,20 +482,16 @@ export class GeocodingService {
                 confidence = 'low';
             }
 
-            // Extract city from various possible fields
-            const cityName = result.address?.city 
-                || result.address?.town 
-                || result.address?.village 
-                || result.address?.municipality;
+            const { city, state, country, postalCode } = extractAddressComponents(result.address);
 
             return {
                 latitude: parseFloat(result.lat),
                 longitude: parseFloat(result.lon),
                 displayName: result.display_name,
-                city: cityName,
-                state: result.address?.state,
-                country: result.address?.country,
-                postalCode: result.address?.postcode,
+                city,
+                state,
+                country,
+                postalCode,
                 confidence
             };
 
@@ -407,6 +503,97 @@ export class GeocodingService {
 
             // Handle network errors
             console.error('[GeocodingService] Geocoding error:', error);
+            throw new GeocodingError(
+                GeocodingErrorType.NetworkError,
+                'Failed to connect to geocoding service. Please check your internet connection.'
+            );
+        }
+    }
+
+    /**
+     * Reverse geocode coordinates to an address via Nominatim's /reverse endpoint.
+     */
+    private async reverseGeocode(latitude: number, longitude: number): Promise<ReverseGeocodingResult> {
+        if (!GeocodingService.validateCoordinates(latitude, longitude)) {
+            throw new GeocodingError(
+                GeocodingErrorType.InvalidInput,
+                'Coordinates are out of range (latitude -90..90, longitude -180..180).'
+            );
+        }
+
+        await this.enforceRateLimit();
+
+        console.debug('[GeocodingService] Reverse geocoding:', latitude, longitude);
+
+        try {
+            const url = `${GeocodingService.NOMINATIM_REVERSE_URL}?` + new URLSearchParams({
+                lat: String(latitude),
+                lon: String(longitude),
+                format: 'json',
+                addressdetails: '1'
+            }).toString();
+
+            const response: RequestUrlResponse = await requestUrl({
+                url,
+                method: 'GET',
+                headers: {
+                    'User-Agent': GeocodingService.USER_AGENT,
+                    'Accept': 'application/json'
+                },
+                throw: false
+            });
+
+            this.lastRequestTime = Date.now();
+
+            if (response.status === 429) {
+                throw new GeocodingError(
+                    GeocodingErrorType.RateLimited,
+                    'Too many requests. Please wait a moment and try again.'
+                );
+            }
+
+            if (response.status !== 200) {
+                throw new GeocodingError(
+                    GeocodingErrorType.NetworkError,
+                    `Reverse geocoding request failed with status ${response.status}`
+                );
+            }
+
+            const result: NominatimReverseResult = response.json;
+
+            // Nominatim's /reverse reports a no-match as HTTP 200 with an `error` field and no
+            // `address`, unlike /search's empty array -- must check explicitly rather than
+            // assuming any 200 response is a hit.
+            if (!result || result.error || !result.address) {
+                throw new GeocodingError(
+                    GeocodingErrorType.NotFound,
+                    'No address found for these coordinates.'
+                );
+            }
+
+            console.debug('[GeocodingService] Reverse geocoding result:', result);
+
+            const { city, state, country, postalCode } = extractAddressComponents(result.address);
+            const streetAddress = [result.address?.house_number, result.address?.road]
+                .filter(Boolean)
+                .join(' ')
+                .trim();
+
+            return {
+                address: streetAddress || result.display_name,
+                displayName: result.display_name,
+                city,
+                state,
+                country,
+                postalCode
+            };
+
+        } catch (error) {
+            if (error instanceof GeocodingError) {
+                throw error;
+            }
+
+            console.error('[GeocodingService] Reverse geocoding error:', error);
             throw new GeocodingError(
                 GeocodingErrorType.NetworkError,
                 'Failed to connect to geocoding service. Please check your internet connection.'
