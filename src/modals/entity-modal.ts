@@ -522,6 +522,7 @@ export class EntityCreationModal extends Modal {
                     { skipAutoGeocode: true }
                 );
                 new Notice(`Created ${this.entityType}: ${entity.label}`);
+                this.warnIfMissingDisplayRequirements(entity);
             }
 
             if (this.onEntityCreated && entity) {
@@ -532,6 +533,28 @@ export class EntityCreationModal extends Modal {
         } catch (error) {
             new Notice(`Failed to create entity: ${error}`);
             console.error('Entity creation error:', error);
+        }
+    }
+
+    /**
+     * Warn the user (without blocking creation) when a newly created entity is
+     * missing the fields TimelineView/MapView require to display it, since
+     * createEntity() succeeds silently even without them.
+     */
+    private warnIfMissingDisplayRequirements(entity: Entity): void {
+        if (this.entityType === EntityType.Event && !this.properties.start_date) {
+            new Notice(
+                `${entity.label} will not appear on the Timeline yet. Edit it to add a start date.`,
+                8000
+            );
+        } else if (
+            this.entityType === EntityType.Location &&
+            (!this.properties.latitude || !this.properties.longitude)
+        ) {
+            new Notice(
+                `${entity.label} will not appear on the Map yet. Click "Put on map" to geocode its address, or enter coordinates directly.`,
+                8000
+            );
         }
     }
 

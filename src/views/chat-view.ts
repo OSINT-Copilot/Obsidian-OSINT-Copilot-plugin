@@ -3589,6 +3589,19 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * Case-insensitively resolve a raw AI-provided type string to its canonical
+   * PascalCase EntityType, or null if no such entity type exists.
+   * Local models (e.g. Ollama) are less reliable than cloud models at
+   * preserving exact enum casing/whitespace, so this tolerates that.
+   */
+  private static canonicalEntityType(rawType: unknown): EntityType | null {
+    if (typeof rawType !== 'string') return null;
+    const normalized = rawType.trim().toLowerCase();
+    const match = Object.values(EntityType).find((t) => t.toLowerCase() === normalized);
+    return match ?? null;
+  }
+
+  /**
    * Generate/update the knowledge graph from retrieved vault notes in local search mode.
    * Uses Ollama (qwen3:14b) on the production server — no OpenAI cost.
    * If the query contained specific entities, focuses extraction on them.
@@ -3661,6 +3674,7 @@ export class ChatView extends ItemView {
 
     let entitiesCreated = 0;
     let connectionsCreated = 0;
+    let droppedEntityCount = 0;
     const globalEntitiesMap = new Map<number, Entity>();
     const entityLabelMap = new Map<string, Entity>();
     let globalIndexOffset = 0;
@@ -3672,8 +3686,9 @@ export class ChatView extends ItemView {
         for (let i = 0; i < operation.entities.length; i++) {
           const entityData = operation.entities[i];
           try {
-            const entityType = entityData.type as EntityType;
-            if (!Object.values(EntityType).includes(entityType)) {
+            const entityType = ChatView.canonicalEntityType(entityData.type);
+            if (!entityType) {
+              droppedEntityCount++;
               operationEntities.push(null);
               continue;
             }
@@ -3714,12 +3729,21 @@ export class ChatView extends ItemView {
 
     if (this.chatHistory[assistantIndex]) {
       this.chatHistory[assistantIndex].progress = undefined;
-      if (entitiesCreated > 0) {
+      if (entitiesCreated > 0 || droppedEntityCount > 0) {
         const currentContent = this.chatHistory[assistantIndex].content || "";
-        this.chatHistory[assistantIndex].content = currentContent +
-          `\n\n🏷️ **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
-        await this.plugin.refreshOrOpenGraphView();
-        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
+        let statusSuffix = "";
+        if (entitiesCreated > 0) {
+          statusSuffix += `\n\n🏷️ **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
+        }
+        if (droppedEntityCount > 0) {
+          const entityWord = droppedEntityCount === 1 ? "entity" : "entities";
+          statusSuffix += `\n\n⚠️ ${droppedEntityCount} ${entityWord} could not be added (unrecognized type).`;
+        }
+        this.chatHistory[assistantIndex].content = currentContent + statusSuffix;
+        if (entitiesCreated > 0) {
+          await this.plugin.refreshOrOpenGraphView();
+          await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
+        }
       }
     }
     await this.renderMessages();

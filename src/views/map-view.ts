@@ -15,6 +15,13 @@ declare const L: any;
 
 export const MAP_VIEW_TYPE = 'graph_copilot-map-view';
 
+/** Match Location/Address/GeoLocation notes regardless of YAML casing or stray whitespace. */
+export function isLocationEntityType(entityType: string | undefined): boolean {
+    if (typeof entityType !== 'string') return false;
+    const normalized = entityType.trim().toLowerCase();
+    return normalized === 'location' || normalized === 'address' || normalized === 'geolocation';
+}
+
 // Leaflet CSS inlined to avoid CSP issues with external stylesheets
 // Leaflet CSS moved to styles.css
 
@@ -360,10 +367,8 @@ export class MapView extends ItemView {
         this.markers.forEach(marker => marker.remove());
         this.markers.clear();
 
-        // Get all Location and Address entities with coordinates
-        const locationEntities = this.entityManager.getEntitiesByType(EntityType.Location);
-        const addressEntities = this.entityManager.getAllEntities().filter(e => e.type === 'Address');
-        const entities = [...locationEntities, ...addressEntities];
+        // Get all Location, Address, and GeoLocation entities with coordinates
+        const entities = this.entityManager.getAllEntities().filter((e) => isLocationEntityType(e.type));
         console.debug('[MapView] Found Location and Address entities:', entities.length, entities);
 
         const locations = this.parseLocations(entities);

@@ -237,3 +237,30 @@ describe('ChatView.largeAttachmentWarningMessage', () => {
         expect(atThreshold).not.toBeNull();
     });
 });
+
+describe('ChatView.canonicalEntityType', () => {
+    // Private static -- accessed the same way this file already reaches other private members
+    // (e.g. `(svc as any).invokeCLI` elsewhere in this test suite).
+    const canonicalEntityType = (ChatView as any).canonicalEntityType.bind(ChatView);
+
+    it('resolves an exact-case type to itself', () => {
+        expect(canonicalEntityType('Event')).toBe('Event');
+        expect(canonicalEntityType('Location')).toBe('Location');
+    });
+
+    it('resolves a differently-cased or whitespace-padded type to the canonical PascalCase value', () => {
+        // The local Ollama model (qwen3:14b) that drives processGraphFromNotes is less reliable
+        // than a cloud model at preserving exact enum casing -- this is what lets those variants
+        // through instead of silently dropping the entity.
+        expect(canonicalEntityType('event')).toBe('Event');
+        expect(canonicalEntityType('EVENT')).toBe('Event');
+        expect(canonicalEntityType(' Event ')).toBe('Event');
+        expect(canonicalEntityType('location')).toBe('Location');
+    });
+
+    it('returns null for an unrecognized type or non-string input', () => {
+        expect(canonicalEntityType('NotARealType')).toBeNull();
+        expect(canonicalEntityType(undefined)).toBeNull();
+        expect(canonicalEntityType(42)).toBeNull();
+    });
+});

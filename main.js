@@ -102923,6 +102923,7 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
           { skipAutoGeocode: true }
         );
         new import_obsidian8.Notice(`Created ${this.entityType}: ${entity.label}`);
+        this.warnIfMissingDisplayRequirements(entity);
       }
       if (this.onEntityCreated && entity) {
         this.onEntityCreated(entity.id);
@@ -102931,6 +102932,24 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
     } catch (error) {
       new import_obsidian8.Notice(`Failed to create entity: ${error}`);
       console.error("Entity creation error:", error);
+    }
+  }
+  /**
+   * Warn the user (without blocking creation) when a newly created entity is
+   * missing the fields TimelineView/MapView require to display it, since
+   * createEntity() succeeds silently even without them.
+   */
+  warnIfMissingDisplayRequirements(entity) {
+    if (this.entityType === "Event" /* Event */ && !this.properties.start_date) {
+      new import_obsidian8.Notice(
+        `${entity.label} will not appear on the Timeline yet. Edit it to add a start date.`,
+        8e3
+      );
+    } else if (this.entityType === "Location" /* Location */ && (!this.properties.latitude || !this.properties.longitude)) {
+      new import_obsidian8.Notice(
+        `${entity.label} will not appear on the Map yet. Click "Put on map" to geocode its address, or enter coordinates directly.`,
+        8e3
+      );
     }
   }
   /**
@@ -109758,6 +109777,12 @@ var GraphView = _GraphView;
 // src/views/map-view.ts
 var import_obsidian14 = require("obsidian");
 var MAP_VIEW_TYPE = "graph_copilot-map-view";
+function isLocationEntityType(entityType) {
+  if (typeof entityType !== "string")
+    return false;
+  const normalized = entityType.trim().toLowerCase();
+  return normalized === "location" || normalized === "address" || normalized === "geolocation";
+}
 var MapView = class extends import_obsidian14.ItemView {
   constructor(leaf, entityManager, onLocationClick) {
     super(leaf);
@@ -110011,9 +110036,7 @@ var MapView = class extends import_obsidian14.ItemView {
     }
     this.markers.forEach((marker) => marker.remove());
     this.markers.clear();
-    const locationEntities = this.entityManager.getEntitiesByType("Location" /* Location */);
-    const addressEntities = this.entityManager.getAllEntities().filter((e) => e.type === "Address");
-    const entities = [...locationEntities, ...addressEntities];
+    const entities = this.entityManager.getAllEntities().filter((e) => isLocationEntityType(e.type));
     console.debug("[MapView] Found Location and Address entities:", entities.length, entities);
     const locations = this.parseLocations(entities);
     console.debug("[MapView] Parsed locations with coordinates:", locations.length, locations);
@@ -119639,6 +119662,19 @@ Drafting the answer...
     }
   }
   /**
+   * Case-insensitively resolve a raw AI-provided type string to its canonical
+   * PascalCase EntityType, or null if no such entity type exists.
+   * Local models (e.g. Ollama) are less reliable than cloud models at
+   * preserving exact enum casing/whitespace, so this tolerates that.
+   */
+  static canonicalEntityType(rawType) {
+    if (typeof rawType !== "string")
+      return null;
+    const normalized = rawType.trim().toLowerCase();
+    const match = Object.values(EntityType).find((t) => t.toLowerCase() === normalized);
+    return match ?? null;
+  }
+  /**
    * Generate/update the knowledge graph from retrieved vault notes in local search mode.
    * Uses Ollama (qwen3:14b) on the production server — no OpenAI cost.
    * If the query contained specific entities, focuses extraction on them.
@@ -119700,6 +119736,7 @@ ${notesText}`;
     updateProgress("Saving graph nodes...", 88);
     let entitiesCreated = 0;
     let connectionsCreated = 0;
+    let droppedEntityCount = 0;
     const globalEntitiesMap = /* @__PURE__ */ new Map();
     const entityLabelMap = /* @__PURE__ */ new Map();
     let globalIndexOffset = 0;
@@ -119709,8 +119746,9 @@ ${notesText}`;
         for (let i = 0; i < operation.entities.length; i++) {
           const entityData = operation.entities[i];
           try {
-            const entityType = entityData.type;
-            if (!Object.values(EntityType).includes(entityType)) {
+            const entityType = _ChatView.canonicalEntityType(entityData.type);
+            if (!entityType) {
+              droppedEntityCount++;
               operationEntities.push(null);
               continue;
             }
@@ -119752,13 +119790,25 @@ ${notesText}`;
     }
     if (this.chatHistory[assistantIndex]) {
       this.chatHistory[assistantIndex].progress = void 0;
-      if (entitiesCreated > 0) {
+      if (entitiesCreated > 0 || droppedEntityCount > 0) {
         const currentContent = this.chatHistory[assistantIndex].content || "";
-        this.chatHistory[assistantIndex].content = currentContent + `
+        let statusSuffix = "";
+        if (entitiesCreated > 0) {
+          statusSuffix += `
 
 \u{1F3F7}\uFE0F **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
-        await this.plugin.refreshOrOpenGraphView();
-        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
+        }
+        if (droppedEntityCount > 0) {
+          const entityWord = droppedEntityCount === 1 ? "entity" : "entities";
+          statusSuffix += `
+
+\u26A0\uFE0F ${droppedEntityCount} ${entityWord} could not be added (unrecognized type).`;
+        }
+        this.chatHistory[assistantIndex].content = currentContent + statusSuffix;
+        if (entitiesCreated > 0) {
+          await this.plugin.refreshOrOpenGraphView();
+          await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
+        }
       }
     }
     await this.renderMessages();
