@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EntityManager } from '../src/services/entity-manager';
-import { createTestApp } from '../src/obsidian-shim/testing/create-test-app';
+import { createTestApp, appReady } from '../src/obsidian-shim/testing/create-test-app';
+import { getContent, snapshotPaths } from './helpers/vault-inspect';
 import { generateId, sanitizeFilename } from '../src/entities/types';
 
 /**
@@ -33,8 +34,8 @@ ${rels}
 ## Notes
 `;
 
-function vaultWithHandWrittenLink() {
-    return createTestApp({
+async function vaultWithHandWrittenLink() {
+    const app = createTestApp({
         files: {
             // A plain (unpiped) wikilink, exactly as the note template invites:
             //   "Add relationships using wikilinks: [[Entity Name]] RELATIONSHIP_TYPE [[Target]]"
@@ -43,6 +44,8 @@ function vaultWithHandWrittenLink() {
             'OSINTCopilot/ftm/Person/Vagit Alekperov.md': note('id-b', 'Person', 'Vagit Alekperov'),
         },
     });
+    await appReady(app);
+    return app;
 }
 
 describe('Change 1 - stop re-parsing wikilinks back into Connection objects', () => {
@@ -53,7 +56,7 @@ describe('Change 1 - stop re-parsing wikilinks back into Connection objects', ()
      * produce phantom connections -- with an unstable id and no disk backing.
      */
     it('TODAY: a hand-written link yields a phantom connection with a NEW id each load', async () => {
-        const app = vaultWithHandWrittenLink();
+        const app = await vaultWithHandWrittenLink();
 
         const loads: string[][] = [];
         for (let i = 0; i < 2; i++) {
@@ -68,11 +71,11 @@ describe('Change 1 - stop re-parsing wikilinks back into Connection objects', ()
         // the graph-yaml mirror) cannot survive a reload.
         expect(loads[0][0]).not.toBe(loads[1][0]);
         // And it never reaches disk, so Connections/ and graph-yaml disagree with memory.
-        expect(app.vault.snapshotPaths().some((p) => p.includes('/Connections/'))).toBe(false);
+        expect(snapshotPaths(app).some((p) => p.includes('/Connections/'))).toBe(false);
     });
 
     it.skip('AFTER: connection identity comes only from Connections/ notes, stable across loads', async () => {
-        const app = vaultWithHandWrittenLink();
+        const app = await vaultWithHandWrittenLink();
 
         const loads: string[][] = [];
         for (let i = 0; i < 2; i++) {

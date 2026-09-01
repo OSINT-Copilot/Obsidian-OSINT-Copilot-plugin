@@ -14,27 +14,8 @@ if (typeof window !== 'undefined') {
     });
 }
 
-// Extend HTMLElement prototype to match Obsidian's API
-if (typeof HTMLElement !== 'undefined') {
-    (HTMLElement.prototype as any).createDiv = function (o?: any) {
-        const div = document.createElement('div');
-        if (o?.cls) div.classList.add(o.cls);
-        this.appendChild(div);
-        return div;
-    };
-    (HTMLElement.prototype as any).createEl = function (tag: string, o?: any) {
-        const el = document.createElement(tag);
-        if (o?.cls) el.classList.add(o.cls);
-        if (o?.text) el.textContent = o.text;
-        this.appendChild(el);
-        return el;
-    };
-    (HTMLElement.prototype as any).addClass = function (cls: string) {
-        this.classList.add(cls);
-    };
-    (HTMLElement.prototype as any).empty = function () {
-        while (this.firstChild) {
-            this.removeChild(this.firstChild);
-        }
-    };
-}
+// Mock inversion: the real prototype patch, not a lossy stand-in. The version this
+// replaced dropped attr/type/placeholder/value/title and supported only one of the
+// three createDiv call forms, so tests could pass against DOM the app never builds.
+import { installDomExtensions } from '../src/obsidian-shim/dom/dom-extensions';
+installDomExtensions();

@@ -6,6 +6,7 @@
  */
 import type { ExecOptions, ExecResult, Host, HttpRequest, HttpResponse, PlatformInfo } from './types';
 import { resolveCliPath } from './node/cli';
+import * as vaultFs from './node/vault';
 
 /**
  * Getters, not a snapshot: the resolve-binary-path suite overrides process.platform
@@ -101,6 +102,24 @@ export const host: Host = {
         kill(execId: string) { running.get(execId)?.kill('SIGTERM'); },
     },
     net: { request },
+    vault: {
+        open: vaultFs.open,
+        basePath: vaultFs.basePath,
+        read: vaultFs.read,
+        readBinary: vaultFs.readBinary,
+        write: vaultFs.write,
+        writeBinary: vaultFs.writeBinary,
+        create: vaultFs.create,
+        mkdir: vaultFs.mkdir,
+        remove: vaultFs.remove,
+        // Electron's shell.trashItem is only available in main; under vitest this
+        // degrades to a plain remove, which is what the tests want anyway.
+        trash: vaultFs.remove,
+        rename: vaultFs.rename,
+        stat: vaultFs.stat,
+        onChange: vaultFs.onChange,
+        resourceUrl: (path: string) => `osint-vault://${encodeURI(path)}`,
+    },
     extract: {
         async pdfText(data: ArrayBuffer) {
             const { extractPdfText } = await import('./node/extract');

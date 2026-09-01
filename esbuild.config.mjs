@@ -33,7 +33,16 @@ const pluginConfig = {
     "@codemirror/language", "@codemirror/lint", "@codemirror/search",
     "@codemirror/state", "@codemirror/view",
     "@lezer/common", "@lezer/highlight", "@lezer/lr",
-    "path", "fs", "os", "zlib", "child_process",
+    // Node builtins: Obsidian's renderer is Node-enabled, so these resolve at runtime.
+    // Both bare and node:-prefixed forms are needed now that src/host/node reaches them
+    // through fs/promises and chokidar.
+    "path", "fs", "fs/promises", "os", "zlib", "child_process", "events", "stream", "util",
+    "node:path", "node:fs", "node:fs/promises", "node:os", "node:zlib",
+    "node:child_process", "node:events", "node:stream", "node:util", "node:url",
+    // chokidar only: the plugin never uses the watcher (Obsidian supplies vault events).
+    // pdfjs-dist stays BUNDLED here -- the plugin ships a single main.js into a vault
+    // with no node_modules beside it, so externalising it would break PDF extraction.
+    "chokidar",
   ],
   format: "cjs",
   target: "es2020",

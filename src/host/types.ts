@@ -66,6 +66,52 @@ export interface HttpResponse {
     text: string;
 }
 
+export interface StatDto {
+    path: string;
+    type: 'file' | 'folder';
+    ctime: number;
+    mtime: number;
+    size: number;
+}
+
+export type WatchEventKind = 'create' | 'modify' | 'delete' | 'rename';
+
+export interface WatchEvent {
+    kind: WatchEventKind;
+    /** Always NFC-normalised in main before it is sent, so index keys always match. */
+    path: string;
+    oldPath?: string;
+    stat?: StatDto;
+}
+
+export interface VaultHost {
+    /** Opens a folder as the vault and returns its complete tree in one call. */
+    open(dir: string): Promise<StatDto[]>;
+    /** Absolute path of the open vault -- used as CLI cwd. */
+    basePath(): string;
+    read(path: string): Promise<string>;
+    readBinary(path: string): Promise<Uint8Array>;
+    /** Overwrites. Returns the authoritative post-write stat so the index cannot drift. */
+    write(path: string, data: string): Promise<StatDto>;
+    writeBinary(path: string, data: Uint8Array): Promise<StatDto>;
+    /** Throws Error("File already exists.") when path exists -- vault-bootstrap-fs matches on it. */
+    create(path: string, data: string): Promise<StatDto>;
+    /**
+     * Creates intermediate folders, but throws Error("Folder already exists.") when the
+     * TARGET exists. Both halves are load-bearing; see the Phase 0 finding.
+     */
+    mkdir(path: string): Promise<StatDto>;
+    remove(path: string): Promise<void>;
+    /** Moves to the OS trash rather than unlinking (fileManager.trashFile). */
+    trash(path: string): Promise<void>;
+    rename(from: string, to: string): Promise<void>;
+    stat(path: string): Promise<StatDto | null>;
+    /** Batched watcher events for out-of-band edits; self-writes are suppressed in main. */
+    onChange(callback: (events: WatchEvent[]) => void): () => void;
+    /** Custom-protocol URL for displaying a vault file (images on graph nodes). */
+    resourceUrl(path: string): string;
+}
+
 export interface Host {
     /**
      * Synchronous because process.platform (7 sites) and os.homedir() never change
@@ -98,4 +144,6 @@ export interface Host {
         pdfText(data: ArrayBuffer): Promise<string>;
         docxText(data: ArrayBuffer): Promise<string>;
     };
+
+    vault: VaultHost;
 }
