@@ -25,7 +25,7 @@ export interface RibbonAction {
 }
 
 export interface ViewCreator {
-    (leaf: unknown): unknown;
+    (leaf: import('../workspace/layout').WorkspaceLeaf): import('../workspace/view').View;
 }
 
 export interface PluginManifest {

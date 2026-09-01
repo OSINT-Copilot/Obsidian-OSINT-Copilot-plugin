@@ -18,7 +18,8 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "host-impl": ["./src/host/impl.ts"]
+      "host-impl": ["./src/host/impl.ts"],
+      "obsidian": ["./src/obsidian-shim/index.ts"]
     }
   },
   "include": ["**/*.ts"],

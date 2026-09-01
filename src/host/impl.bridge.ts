@@ -47,4 +47,9 @@ export const host: Host = {
         onChange: (cb) => bridge().vault.onChange(cb),
         resourceUrl: (p) => bridge().vault.resourceUrl(p),
     },
+    app: {
+        pickVault: () => bridge().app.pickVault(),
+        lastVault: () => bridge().app.lastVault(),
+        rememberVault: (dir) => bridge().app.rememberVault(dir),
+    },
 };

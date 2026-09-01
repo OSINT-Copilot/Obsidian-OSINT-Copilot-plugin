@@ -26,7 +26,9 @@ export interface RequestUrlResponse {
     headers: Record<string, string>;
     arrayBuffer: ArrayBuffer;
     text: string;
-    readonly json: unknown;
+    /** Typed `any` to match Obsidian: callers assign it straight to their own shapes. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    readonly json: any;
 }
 
 export async function requestUrl(param: RequestUrlParam | string): Promise<RequestUrlResponse> {

@@ -24,6 +24,23 @@ export type { CachedMetadata } from './core/metadata-cache';
 export { requestUrl } from './core/request-url';
 export type { RequestUrlParam, RequestUrlResponse } from './core/request-url';
 
+// --- workspace -------------------------------------------------------------
+export { Workspace } from './workspace/workspace';
+export type { ViewState, WorkspaceEventRef } from './workspace/workspace';
+export {
+    WorkspaceItem, WorkspaceLeaf, WorkspaceParent, WorkspaceRoot, WorkspaceSplit, WorkspaceTabs,
+} from './workspace/layout';
+export { Editor, ItemView, View } from './workspace/view';
+export { MARKDOWN_VIEW_TYPE, MarkdownView } from './workspace/markdown-view';
+export type { MarkdownViewMode } from './workspace/markdown-view';
+
+// --- ui --------------------------------------------------------------------
+export {
+    ButtonComponent, ColorComponent, DropdownComponent, MarkdownRenderer, Menu, MenuItem,
+    Modal, Notice, PluginSettingTab, Setting, TextAreaComponent, TextComponent,
+    ToggleComponent, getIconIds, setIcon,
+} from './ui';
+
 // --- dom -------------------------------------------------------------------
 export { installDomExtensions } from './dom/dom-extensions';
 export type { DomElementInfo } from './dom/dom-extensions';

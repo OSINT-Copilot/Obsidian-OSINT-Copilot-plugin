@@ -19,11 +19,13 @@ import { TAbstractFile, TFile, TFolder, makeFile, makeFolder } from './tfile';
 import type { VaultStorage } from './storage';
 
 export type VaultEventName = 'create' | 'modify' | 'delete' | 'rename';
-type Handler = (file: TAbstractFile, oldPath?: string) => void;
+type Handler = (file: TAbstractFile, oldPath: string) => void;
 
 export interface EventRef {
     name: VaultEventName;
     handler: Handler;
+    /** Component.registerEvent(ref) calls this on unload. */
+    detach(): void;
 }
 
 export class Vault {
@@ -65,14 +67,14 @@ export class Vault {
     on(name: VaultEventName, handler: Handler): EventRef {
         if (!this.handlers.has(name)) this.handlers.set(name, new Set());
         this.handlers.get(name)!.add(handler);
-        return { name, handler };
+        return { name, handler, detach: () => this.handlers.get(name)?.delete(handler) };
     }
 
     offref(ref: EventRef | null | undefined): void {
         if (ref) this.handlers.get(ref.name)?.delete(ref.handler);
     }
 
-    private emit(name: VaultEventName, file: TAbstractFile, oldPath?: string): void {
+    private emit(name: VaultEventName, file: TAbstractFile, oldPath = ''): void {
         for (const handler of [...(this.handlers.get(name) ?? [])]) handler(file, oldPath);
     }
 
@@ -118,6 +120,33 @@ export class Vault {
         this.cache(file, data);
         this.emit('create', file);
         return file;
+    }
+
+    /** Binary create -- chat attachments, graph image drops, entity media. */
+    async createBinary(path: string, data: ArrayBuffer): Promise<TFile> {
+        const target = normalizePath(path);
+        if (this.index.has(target)) throw new Error('File already exists.');
+        await this.adapter.writeBinary(target, data);
+        const stat = await this.storage.write(target, '');
+        const file = this.upsert({ ...stat, path: target, type: 'file' }) as TFile;
+        this.emit('create', file);
+        return file;
+    }
+
+    async readBinary(file: TFile): Promise<ArrayBuffer> {
+        const text = await this.storage.read(file.path);
+        const bytes = new Uint8Array(text.length);
+        for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+        return bytes.buffer;
+    }
+
+    /**
+     * Displayable URL for a vault file -- graph node thumbnails (graph-view.ts:582).
+     * The mtime query busts Electron's cache, which otherwise serves a stale image
+     * forever after a re-import.
+     */
+    getResourcePath(file: TFile): string {
+        return `osint-vault://${encodeURI(file.path)}?v=${file.stat.mtime}`;
     }
 
     async read(file: TFile): Promise<string> {
@@ -181,6 +210,10 @@ export class Vault {
             const existing = this.getAbstractFileByPath(path);
             if (existing instanceof TFile) await this.modify(existing, data);
             else await this.create(path, data);
+        },
+        writeBinary: async (path: string, data: ArrayBuffer): Promise<void> => {
+            // Binary writes bypass the text cache; chat attachments are the only caller.
+            await this.storage.write(path, new TextDecoder('latin1').decode(new Uint8Array(data)));
         },
         mkdir: async (path: string): Promise<void> => {
             if (!this.getAbstractFileByPath(path)) await this.createFolder(path);

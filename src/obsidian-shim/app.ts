@@ -1,13 +1,14 @@
 /**
  * App -- the object 34 files take in their constructor.
  *
- * Workspace is deliberately absent until Phase 3: the workspace shim and the shell's
- * tab manager must be the SAME object (osint-workspace-controller compares
- * leaf.getRoot() to workspace.rootSplit and reads leaf.view.getViewType()), so
- * standing up a placeholder now would guarantee two layouts that drift.
+ * `workspace` is the real layout tree, not a façade over a separate tab manager:
+ * osint-workspace-controller compares leaf.getRoot() to workspace.rootSplit and
+ * reads leaf.view.getViewType(), so two synchronised layouts would silently
+ * misplace every pane.
  */
 import { Vault } from './vault/vault';
 import { MetadataCache } from './core/metadata-cache';
+import { Workspace } from './workspace/workspace';
 import { hostStorage } from './vault/storage';
 import { host } from '../host';
 import type { TAbstractFile } from './vault/tfile';
@@ -15,6 +16,7 @@ import type { TAbstractFile } from './vault/tfile';
 export class App {
     readonly vault: Vault;
     readonly metadataCache: MetadataCache;
+    readonly workspace = new Workspace();
 
     readonly fileManager = {
         /**
@@ -30,6 +32,7 @@ export class App {
     constructor(vault: Vault) {
         this.vault = vault;
         this.metadataCache = new MetadataCache(vault);
+        this.workspace.app = this;
     }
 
     /** Opens a folder as the vault. A vault is just a directory. */

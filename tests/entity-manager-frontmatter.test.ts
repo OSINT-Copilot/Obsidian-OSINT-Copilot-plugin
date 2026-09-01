@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { App, TFile } from 'obsidian';
+import { createTestApp } from '../src/obsidian-shim/testing/create-test-app';
 import { EntityManager } from '../src/services/entity-manager';
 import { EntityType } from '../src/entities/types';
 
@@ -8,7 +9,7 @@ describe('EntityManager frontmatter reserved-key handling', () => {
   let manager: EntityManager;
 
   beforeEach(() => {
-    app = new App();
+    app = createTestApp() as unknown as App;
     manager = new EntityManager(app as any, 'OSINTCopilot', null);
   });
 
@@ -94,7 +95,7 @@ describe('EntityManager legacy-to-FTM schema wiring (createEntity -> updateEntit
   let files: Map<string, TFile>;
 
   beforeEach(() => {
-    app = new App();
+    app = createTestApp() as unknown as App;
     files = new Map();
     app.vault.getAbstractFileByPath = vi.fn((path: string) => files.get(path) ?? null);
     app.vault.createFolder = vi.fn().mockResolvedValue(undefined);

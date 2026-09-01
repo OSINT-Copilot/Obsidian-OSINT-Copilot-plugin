@@ -146,4 +146,12 @@ export interface Host {
     };
 
     vault: VaultHost;
+
+    app: {
+        /** Native folder picker. Returns null if the user cancels. */
+        pickVault(): Promise<string | null>;
+        /** Last opened vault, remembered across launches in userData. */
+        lastVault(): Promise<string | null>;
+        rememberVault(dir: string): Promise<void>;
+    };
 }

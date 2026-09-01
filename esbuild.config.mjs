@@ -103,10 +103,13 @@ const rendererConfig = {
 
 function copyRendererStatics() {
   const dest = path.join(OUT, "renderer");
-  fs.mkdirSync(dest, { recursive: true });
-  for (const file of ["index.html", "renderer.css"]) {
-    fs.copyFileSync(path.join("src/renderer", file), path.join(dest, file));
-  }
+  fs.mkdirSync(path.join(dest, "theme"), { recursive: true });
+  fs.copyFileSync("src/renderer/index.html", path.join(dest, "index.html"));
+  fs.copyFileSync("src/renderer/theme/tokens.css", path.join(dest, "theme/tokens.css"));
+  fs.copyFileSync("src/renderer/shell/shell.css", path.join(dest, "shell.css"));
+  // The plugin's own stylesheet, shipped verbatim: it needs no edits once the 29
+  // Obsidian variables it references are defined in tokens.css.
+  fs.copyFileSync("styles.css", path.join(dest, "styles.css"));
 }
 
 // ------------------------------------------------------------------------ run

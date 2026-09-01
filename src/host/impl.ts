@@ -120,6 +120,12 @@ export const host: Host = {
         onChange: vaultFs.onChange,
         resourceUrl: (path: string) => `osint-vault://${encodeURI(path)}`,
     },
+    // Overridden in main (electron/ipc) where dialog and userData exist; inert under vitest.
+    app: {
+        async pickVault() { return null; },
+        async lastVault() { return null; },
+        async rememberVault() { /* no-op outside Electron */ },
+    },
     extract: {
         async pdfText(data: ArrayBuffer) {
             const { extractPdfText } = await import('./node/extract');

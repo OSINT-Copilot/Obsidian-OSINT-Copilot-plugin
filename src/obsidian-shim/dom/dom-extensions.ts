@@ -34,7 +34,11 @@ export interface DomElementInfo {
 }
 
 declare global {
-    interface HTMLElement {
+    /**
+     * Declared on Element, not just HTMLElement: all five views reach content via
+     * `containerEl.children[1]`, which TypeScript types as Element.
+     */
+    interface Element {
         createEl<K extends keyof HTMLElementTagNameMap>(
             tag: K, o?: DomElementInfo | string, callback?: (el: HTMLElementTagNameMap[K]) => void,
         ): HTMLElementTagNameMap[K];

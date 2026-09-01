@@ -1,0 +1,283 @@
+/*
+ * Obsidian theme tokens.
+ *
+ * styles.css has NO :root block -- all 246 of its var() references were inherited
+ * from Obsidian's shell, across 29 distinct variables. Those same variables are also
+ * hard-coded in ~340 inline-style sites in TypeScript (setCssProps, cssText,
+ * .style.color), so defining them here repairs the stylesheet AND every inline site
+ * at once.
+ */
+:root {
+    --background-primary: #ffffff;
+    --background-secondary: #f5f6f8;
+    --background-secondary-alt: #e9ebef;
+    --background-modifier-border: #dcdde1;
+    --background-modifier-hover: rgba(0, 0, 0, 0.06);
+    --background-modifier-active-hover: rgba(0, 0, 0, 0.10);
+    --background-modifier-error: #fbe9e9;
+
+    --text-normal: #1f2328;
+    --text-muted: #6b7280;
+    --text-accent: #2563eb;
+    --text-error: #c02b2b;
+    --text-success: #1a7f37;
+    --text-warning: #9a6700;
+    --text-on-accent: #ffffff;
+    --text-on-accent-inverted: #1f2328;
+
+    --interactive-normal: #eceef1;
+    --interactive-hover: #e2e5e9;
+    --interactive-accent: #2563eb;
+    --interactive-accent-hover: #1d4ed8;
+
+    --link-color: var(--text-accent);
+    --code-background: #f2f3f5;
+    --quote-opening-modifier: #d0d3d9;
+    --color-orange: #d97706;
+
+    --radius-s: 4px;
+    --radius-m: 8px;
+
+    --font-text: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font-ui-small: 13px;
+    --font-ui-smaller: 12px;
+}
+
+:root[data-theme="dark"],
+:root:not([data-theme="light"]) {
+    color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --background-primary: #1e1e1e;
+        --background-secondary: #252526;
+        --background-secondary-alt: #2d2d30;
+        --background-modifier-border: #3a3a3c;
+        --background-modifier-hover: rgba(255, 255, 255, 0.07);
+        --background-modifier-active-hover: rgba(255, 255, 255, 0.12);
+        --background-modifier-error: #4a2121;
+
+        --text-normal: #dcddde;
+        --text-muted: #9aa0a6;
+        --text-accent: #7aa2f7;
+        --text-error: #ff6b6b;
+        --text-success: #6ccf7f;
+        --text-warning: #e3b341;
+        --text-on-accent: #ffffff;
+        --text-on-accent-inverted: #1e1e1e;
+
+        --interactive-normal: #2f2f31;
+        --interactive-hover: #3a3a3c;
+        --interactive-accent: #4c7ef3;
+        --interactive-accent-hover: #6a93f7;
+
+        --code-background: #2a2a2c;
+        --quote-opening-modifier: #4a4a4c;
+    }
+}
+
+:root[data-theme="dark"] {
+    --background-primary: #1e1e1e;
+    --background-secondary: #252526;
+    --background-secondary-alt: #2d2d30;
+    --background-modifier-border: #3a3a3c;
+    --background-modifier-hover: rgba(255, 255, 255, 0.07);
+    --background-modifier-active-hover: rgba(255, 255, 255, 0.12);
+    --background-modifier-error: #4a2121;
+    --text-normal: #dcddde;
+    --text-muted: #9aa0a6;
+    --text-accent: #7aa2f7;
+    --text-error: #ff6b6b;
+    --text-success: #6ccf7f;
+    --text-warning: #e3b341;
+    --interactive-normal: #2f2f31;
+    --interactive-hover: #3a3a3c;
+    --interactive-accent: #4c7ef3;
+    --interactive-accent-hover: #6a93f7;
+    --code-background: #2a2a2c;
+    --quote-opening-modifier: #4a4a4c;
+}
+
+/*
+ * Layout classes Obsidian's stylesheet used to supply. styles.css contains no
+ * .setting-item, .modal or .notice rules at all, and TypeScript applies these class
+ * names 61 times, so the tokens above are necessary but not sufficient -- without
+ * this block every Setting row and Modal is unstyled.
+ */
+
+/* --- Setting rows (89 Setting instances, 68 on the settings page) --- */
+.setting-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+    border-top: 1px solid var(--background-modifier-border);
+}
+.setting-item:first-child { border-top: none; }
+.setting-item-info { flex: 1 1 auto; min-width: 0; }
+.setting-item-name { color: var(--text-normal); font-size: 14px; }
+.setting-item-description {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+.setting-item-control {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.setting-item-heading {
+    border-top: none;
+    padding: 24px 0 6px;
+}
+.setting-item-heading .setting-item-name {
+    font-size: 17px;
+    font-weight: 600;
+}
+.setting-item[data-disabled] { opacity: 0.5; pointer-events: none; }
+
+.setting-input, .setting-textarea, .dropdown {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+}
+.setting-textarea { min-height: 72px; min-width: 320px; resize: vertical; }
+.setting-input:focus, .setting-textarea:focus, .dropdown:focus {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: -1px;
+}
+
+.setting-button {
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    border: none;
+    border-radius: var(--radius-s);
+    padding: 6px 12px;
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+.setting-button:hover { background: var(--interactive-hover); }
+.setting-button:disabled { opacity: 0.5; cursor: default; }
+.mod-cta { background: var(--interactive-accent); color: var(--text-on-accent); }
+.mod-cta:hover { background: var(--interactive-accent-hover); }
+.mod-warning { background: var(--background-modifier-error); color: var(--text-error); }
+
+.checkbox-container { display: inline-flex; align-items: center; }
+
+/* --- Modals (16 subclasses) --- */
+.modal-container {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+}
+/* confirm-modal queries for this element to defeat click-outside-to-close. */
+.modal-bg {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+}
+.modal {
+    position: relative;
+    z-index: 1;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border-radius: var(--radius-m);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+    max-width: min(90vw, 760px);
+    max-height: 85vh;
+    overflow: auto;
+    padding: 20px 24px;
+}
+.modal-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
+.modal-title:empty { display: none; }
+.modal-close-button {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+    opacity: 0.6;
+}
+.modal-close-button::before { content: "\00d7"; font-size: 20px; line-height: 22px; }
+.modal-close-button:hover { opacity: 1; }
+
+/* --- Notices (233 call sites) --- */
+.notice-container {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+.notice {
+    pointer-events: auto;
+    background: var(--background-secondary-alt);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 10px 14px;
+    font-size: var(--font-ui-small);
+    max-width: 380px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+}
+
+/* --- Context menus --- */
+.menu {
+    z-index: 1500;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 4px;
+    min-width: 180px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+.menu-item:hover { background: var(--background-modifier-hover); }
+.menu-item[data-disabled] { opacity: 0.5; pointer-events: none; }
+.menu-separator { height: 1px; background: var(--background-modifier-border); margin: 4px 0; }
+.menu-item-icon { display: inline-flex; width: 16px; height: 16px; }
+.menu-item-icon svg { width: 16px; height: 16px; }
+
+/* --- Icons --- */
+.svg-icon-wrapper { display: inline-flex; }
+.svg-icon-wrapper svg { width: 1em; height: 1em; stroke: currentColor; }
+.clickable-icon { cursor: pointer; opacity: 0.75; }
+.clickable-icon:hover { opacity: 1; }
+
+/* --- Views --- */
+.workspace-leaf-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.view-header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.view-header:empty { display: none; }
+.view-content { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
+.markdown-source-view {
+    width: 100%; height: 100%; border: none; resize: none; outline: none;
+    background: var(--background-primary); color: var(--text-normal);
+    font-family: var(--font-monospace); font-size: 14px; line-height: 1.6; padding: 16px;
+}
+.markdown-preview-view { padding: 16px; line-height: 1.6; }
+.internal-link { color: var(--link-color); text-decoration: none; }
+.internal-link:hover { text-decoration: underline; }

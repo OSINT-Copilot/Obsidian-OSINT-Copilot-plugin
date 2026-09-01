@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createTestApp } from '../src/obsidian-shim/testing/create-test-app';
 
 vi.mock('../src/services/agent-runtime/chat-runtime-availability', () => ({
   getChatRuntimeAvailability: vi.fn().mockResolvedValue({
@@ -46,7 +47,7 @@ describe('ChatView send routing', () => {
   let view: ChatView;
 
   beforeEach(() => {
-    app = new App();
+    app = createTestApp() as unknown as App;
     plugin = new VaultAIPlugin(app, { id: 'test-plugin', name: 'Test Plugin' } as any);
 
     plugin.settings = {

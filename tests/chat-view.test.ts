@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createTestApp } from '../src/obsidian-shim/testing/create-test-app';
 import VaultAIPlugin, { ChatView, CHAT_VIEW_TYPE } from '../main';
 import { App, WorkspaceLeaf } from 'obsidian';
 import {
@@ -17,7 +18,7 @@ describe('ChatView', () => {
 
     beforeEach(() => {
         // Instantiate mocks
-        const app = new App();
+        const app = createTestApp() as unknown as App;
         plugin = new VaultAIPlugin(app, { id: 'test-plugin', name: 'Test Plugin' } as any);
 
         // Mock plugin dependencies
@@ -79,7 +80,7 @@ describe('ChatView', () => {
             registerVaultEvents: vi.fn(),
         };
 
-        leaf = new App().workspace.getLeaf(false);
+        leaf = (createTestApp() as unknown as App).workspace.getLeaf(false);
         chatView = new ChatView(leaf, plugin);
 
         // Mock containerEl which is normally set by Obsidian

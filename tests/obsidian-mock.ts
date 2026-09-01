@@ -1,34 +1,8 @@
 import { vi } from 'vitest';
 
-export class App {
-    workspace: any;
-    vault: any;
-    metadataCache: any;
-
-    constructor() {
-        this.workspace = {
-            getLeavesOfType: vi.fn().mockReturnValue([]),
-            revealLeaf: vi.fn(),
-            getLeaf: vi.fn().mockReturnValue({
-                setViewState: vi.fn().mockResolvedValue(undefined),
-                view: {
-                    containerEl: document.createElement('div'),
-                }
-            }),
-        };
-        this.vault = {
-            adapter: {
-                exists: vi.fn().mockResolvedValue(true),
-                read: vi.fn().mockResolvedValue(''),
-                write: vi.fn().mockResolvedValue(undefined),
-            },
-            getAbstractFileByPath: vi.fn(),
-        };
-        this.metadataCache = {
-            getFileCache: vi.fn().mockReturnValue({}),
-        };
-    }
-}
+// App now comes from the shim; tests construct one with createTestApp().
+import { App } from '../src/obsidian-shim/app';
+export { App };
 
 export class Plugin {
     app: App;
