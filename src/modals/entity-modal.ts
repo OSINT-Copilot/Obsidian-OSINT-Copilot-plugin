@@ -1308,7 +1308,7 @@ export class FTMEntityCreationModal extends Modal {
         };
 
         const hintText = wrapper.createEl('span', {
-            text: 'or drag and drop here', // eslint-disable-line obsidianmd/ui/sentence-case
+            text: 'or drag and drop here', // eslint-disable-line
             cls: 'graph_copilot-upload-hint'
         });
         hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
@@ -1388,7 +1388,7 @@ export class FTMEntityCreationModal extends Modal {
 
             } catch (err) {
                 console.error('File upload error:', err);
-                hintText.textContent = '❌ Upload failed'; // eslint-disable-line obsidianmd/ui/sentence-case
+                hintText.textContent = '❌ Upload failed'; // eslint-disable-line
                 new Notice(`Upload failed: ${err}`);
             }
         };
@@ -1489,7 +1489,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                     selector.open();
                 }).open();
             } else {
-                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line obsidianmd/ui/sentence-case
+                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line
             }
         };
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
@@ -2298,7 +2298,7 @@ export class FTMEntityEditModal extends Modal {
         };
 
         const hintText = wrapper.createEl('span', {
-            text: 'or drag and drop to replace', // eslint-disable-line obsidianmd/ui/sentence-case
+            text: 'or drag and drop to replace', // eslint-disable-line
             cls: 'graph_copilot-upload-hint'
         });
         hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
@@ -2369,7 +2369,7 @@ export class FTMEntityEditModal extends Modal {
 
             } catch (err) {
                 console.error('File upload error:', err);
-                hintText.textContent = '❌ Upload failed'; // eslint-disable-line obsidianmd/ui/sentence-case
+                hintText.textContent = '❌ Upload failed'; // eslint-disable-line
                 new Notice(`Upload failed: ${err}`);
             }
         };
@@ -2795,7 +2795,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
                     'Interval' // Specify base type
                 ).open();
             } else {
-                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line obsidianmd/ui/sentence-case
+                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line
             }
         };
 

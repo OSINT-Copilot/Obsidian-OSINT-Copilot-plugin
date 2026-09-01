@@ -159,7 +159,7 @@ export class ChatView extends ItemView {
     if (!this.activeAbortControllers.has(messageIndex)) return;
 
     const cancelBtn = infoContainer.createEl("button", {
-      text: "✕ Cancel", // eslint-disable-line obsidianmd/ui/sentence-case
+      text: "✕ Cancel", // eslint-disable-line
       cls: "vault-ai-cancel-btn",
     });
     cancelBtn.style.fontSize = "11px";
@@ -525,7 +525,7 @@ export class ChatView extends ItemView {
       cls: "vault-ai-upload-btn",
       attr: {
         "aria-label": "Upload file for graph generation",
-        "title": "Upload file for graph generation (.md, .txt, .pdf, .docx)" // eslint-disable-line obsidianmd/ui/sentence-case
+        "title": "Upload file for graph generation (.md, .txt, .pdf, .docx)" // eslint-disable-line
       }
     });
     // Only show in Graph Generation mode (or Graph Only mode)
@@ -810,13 +810,13 @@ export class ChatView extends ItemView {
       const url = urlInput.value.trim();
 
       if (!url) {
-        statusEl.textContent = "❌ Please enter a URL"; // eslint-disable-line obsidianmd/ui/sentence-case
+        statusEl.textContent = "❌ Please enter a URL"; // eslint-disable-line
         statusEl.style.color = "var(--text-error)";
         return;
       }
 
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        statusEl.textContent = "❌ URL must start with http:// or https://"; // eslint-disable-line obsidianmd/ui/sentence-case
+        statusEl.textContent = "❌ URL must start with http:// or https://"; // eslint-disable-line
         statusEl.style.color = "var(--text-error)";
         return;
       }
@@ -825,7 +825,7 @@ export class ChatView extends ItemView {
       extractBtn.disabled = true;
       cancelBtn.disabled = true;
       extractBtn.textContent = "Extracting...";
-      statusEl.textContent = "🔗 Fetching content from URL..."; // eslint-disable-line obsidianmd/ui/sentence-case
+      statusEl.textContent = "🔗 Fetching content from URL..."; // eslint-disable-line
       statusEl.style.color = "var(--text-muted)";
 
       try {
@@ -856,14 +856,14 @@ export class ChatView extends ItemView {
         if (isLikelyExpectedUrlFetchFailure(errorMsg)) {
           console.debug("URL extraction skipped:", errorMsg.slice(0, 120));
           statusEl.textContent =
-            "Could not open this link from Obsidian (login or site protection). Copy the page text into the chat instead."; // eslint-disable-line obsidianmd/ui/sentence-case
+            "Could not open this link from Obsidian (login or site protection). Copy the page text into the chat instead."; // eslint-disable-line
           statusEl.style.color = "var(--text-muted)";
         } else {
           console.error("URL extraction error:", error);
           if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
-            statusEl.textContent = "❌ Request timed out. Try a simpler page."; // eslint-disable-line obsidianmd/ui/sentence-case
+            statusEl.textContent = "❌ Request timed out. Try a simpler page."; // eslint-disable-line
           } else if (errorMsg.includes("429")) {
-            statusEl.textContent = "❌ Server busy. Please wait and try again."; // eslint-disable-line obsidianmd/ui/sentence-case
+            statusEl.textContent = "❌ Server busy. Please wait and try again."; // eslint-disable-line
           } else {
             statusEl.textContent = `❌ ${errorMsg}`;
           }

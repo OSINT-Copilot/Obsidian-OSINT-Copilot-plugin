@@ -13,8 +13,8 @@
 - [[CHARTER-summary]] — goals, profiles, versioning
 - [[object-types]] — Package, Entity, Artifact, Statement, EvidenceLink, SourceAssessment
 - [[schemata-yaml]] — FtM-style YAML entity definitions (`spec/schemata/*.yaml`)
-- [[unified-ontology]] — single-tree merge (pointer to `spec/UNIFIED_ONTOLOGY.md`)
-- [[streams]] — manifest + JSONL layout
+- [[unified-ontology]] — layers, renames, OSINT Copilot mapping (see `spec/UNIFIED_ONTOLOGY.md`)
+- [[streams]] — manifest, JSONL layout, ID conventions, validation levels
 
 ## Raw pointers
 
@@ -22,4 +22,4 @@
 
 ---
 
-*Stamp: 2026-04-18 — unified schemata hub added*
+*Stamp: 2026-09-01 — all 5 pages refreshed against the current spec (see [[../CLAUDE.md|Last updated]])*

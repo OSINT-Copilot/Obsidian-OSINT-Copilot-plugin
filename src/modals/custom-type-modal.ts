@@ -210,7 +210,7 @@ export class CustomTypeCreationModal extends Modal {
         const nameContainer = formGrid.createDiv();
         nameContainer.createDiv({ text: 'Label *', cls: 'setting-item-name' });
         const nameInput = new TextComponent(nameContainer);
-        nameInput.setPlaceholder('E.g. birth date'); // eslint-disable-line obsidianmd/ui/sentence-case
+        nameInput.setPlaceholder('E.g. birth date'); // eslint-disable-line
         nameInput.inputEl.addClass('graph_copilot-input-full');
         nameInput.onChange(val => {
             newProp.label = val;

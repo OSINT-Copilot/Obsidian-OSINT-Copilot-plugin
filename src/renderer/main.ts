@@ -22,7 +22,9 @@ import { SettingsWindow } from './shell/settings-window';
 
 installDomExtensions();
 
-const MANIFEST = { id: 'osint-copilot', name: 'OSINT Copilot', version: '3.0.0-dev' };
+// Version is read from package.json at build time so the About row cannot drift.
+declare const __APP_VERSION__: string;
+const MANIFEST = { id: 'osint-copilot', name: 'OSINT Copilot', version: __APP_VERSION__ };
 
 async function chooseVault(): Promise<string | null> {
     // --vault=<dir> wins, so a headless smoke run needs no picker interaction.

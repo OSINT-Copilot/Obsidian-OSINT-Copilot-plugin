@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import fs from "fs";
+
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf-8"));
 import path from "path";
 
 const banner = `/*
@@ -37,8 +39,10 @@ const pluginConfig = {
     // Both bare and node:-prefixed forms are needed now that src/host/node reaches them
     // through fs/promises and chokidar.
     "path", "fs", "fs/promises", "os", "zlib", "child_process", "events", "stream", "util",
+    "dns", "dns/promises", "net", "crypto",
     "node:path", "node:fs", "node:fs/promises", "node:os", "node:zlib",
     "node:child_process", "node:events", "node:stream", "node:util", "node:url",
+    "node:dns", "node:dns/promises", "node:net", "node:crypto",
     // chokidar only: the plugin never uses the watcher (Obsidian supplies vault events).
     // pdfjs-dist stays BUNDLED here -- the plugin ships a single main.js into a vault
     // with no node_modules beside it, so externalising it would break PDF extraction.
@@ -90,6 +94,7 @@ const rendererConfig = {
   sourcemap: prod ? false : "inline",
   minify: prod,
   logLevel: "info",
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   alias: {
     // Not yet a full module -- Phase 2 adds src/obsidian-shim/index.ts and this
     // starts resolving real imports. Harmless until then: nothing imports it.
