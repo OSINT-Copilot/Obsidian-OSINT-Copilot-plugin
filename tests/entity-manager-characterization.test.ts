@@ -11,16 +11,17 @@ import { getContent, snapshotPaths } from './helpers/vault-inspect';
  * behaviours locked here are known bugs (see the port plan). The point is that any
  * change to the bytes written must be a deliberate, reviewed edit to this file.
  *
- * Determinism: generateId() is a hand-rolled UUIDv4 over Math.random(), so we seed
- * Math.random rather than patching production code.
+ * Determinism: generateId() uses crypto.randomUUID(), so ids are stubbed with a
+ * counter rather than seeding Math.random. Stubbing the source of randomness keeps
+ * the golden snapshots byte-stable without touching production code.
  */
 
-function seedRandom(seed = 42): () => void {
-    let state = seed;
-    const spy = vi.spyOn(Math, 'random').mockImplementation(() => {
-        // xorshift -- deterministic, uniform enough for UUID nibbles
-        state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
-        return ((state >>> 0) % 100000) / 100000;
+function seedRandom(): () => void {
+    let counter = 0;
+    const spy = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+        counter++;
+        const hex = counter.toString(16).padStart(12, '0');
+        return `00000000-0000-4000-8000-${hex}` as `${string}-${string}-${string}-${string}-${string}`;
     });
     return () => spy.mockRestore();
 }

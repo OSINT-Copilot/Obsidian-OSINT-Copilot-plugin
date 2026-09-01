@@ -90,10 +90,11 @@ export class CustomTypesService {
 
     async deleteCustomType(name: string): Promise<void> {
         if (this.customSchemas.delete(name)) {
-            // Note: FTMSchemaService handles registration but we don't have unregister method yet.
-            // Persistence is handled here, so restarting plugin will clear memory.
+            // Drop it from the live registry too, so the type disappears from pickers
+            // immediately instead of lingering until the next restart.
+            ftmSchemaService.unregisterSchema(name);
             await this.saveCustomTypes();
-            new Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
+            new Notice(`Custom entity type '${name}' removed.`);
         }
     }
 

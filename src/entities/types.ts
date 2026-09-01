@@ -702,23 +702,48 @@ export function legacyToFTMSchema(type: EntityType): string {
 
 /**
  * Generate a unique ID for entities.
+ *
+ * Uses the platform CSPRNG. The previous hand-rolled UUIDv4 over Math.random() was
+ * fully predictable once Math.random was seeded, and Math.random makes no uniqueness
+ * guarantee across processes -- two app instances writing to a synced vault could
+ * collide. Existing ids are untouched; only newly minted ones change.
  */
 export function generateId(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
+    return crypto.randomUUID();
 }
+
+/** Longest filename stem we will emit, before any disambiguating suffix. */
+const MAX_FILENAME_LENGTH = 100;
 
 /**
  * Sanitize a string for use as a filename.
+ *
+ * Truncation is lossy, so two labels sharing their first 100 characters used to
+ * collapse onto the same path and silently overwrite each other -- routine for
+ * entities whose label is a long official company name. When a name is truncated we
+ * append a short hash of the FULL name, so distinct labels stay distinct while the
+ * result remains readable and deterministic (the same label always yields the same
+ * filename, which entity updates depend on).
  */
 export function sanitizeFilename(name: string): string {
-    return name
+    const cleaned = name
         .replace(/[\\/:*?"<>|]/g, '-')
         .replace(/\s+/g, ' ')
-        .trim()
-        .substring(0, 100);
+        .trim();
+
+    if (cleaned.length <= MAX_FILENAME_LENGTH) return cleaned;
+
+    const suffix = `~${shortHash(cleaned)}`;
+    return cleaned.substring(0, MAX_FILENAME_LENGTH - suffix.length) + suffix;
+}
+
+/** FNV-1a, base36. Deterministic and dependency-free; not security-relevant. */
+function shortHash(value: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(36).padStart(7, '0').slice(0, 7);
 }
 

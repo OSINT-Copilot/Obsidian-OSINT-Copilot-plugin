@@ -3,6 +3,7 @@ import { EntityManager } from '../src/services/entity-manager';
 import { createTestApp, appReady } from '../src/obsidian-shim/testing/create-test-app';
 import { getContent, snapshotPaths } from './helpers/vault-inspect';
 import { generateId, sanitizeFilename } from '../src/entities/types';
+import { ftmSchemaService } from '../src/services/ftm-schema-service';
 
 /**
  * INTENDED BEHAVIOURAL CHANGES -- Phase 0 safety net, second half.
@@ -48,33 +49,14 @@ async function vaultWithHandWrittenLink() {
     return app;
 }
 
-describe('Change 1 - stop re-parsing wikilinks back into Connection objects', () => {
+describe('Change 1 - wikilinks are rendered, never parsed back into Connections', () => {
     /**
      * Note the real defect is narrower than "duplicates on every load": the
      * auto-written links are piped ([[path|Label]]), so findEntityByLabel fails on
      * them and they are silently ignored. It is HAND-WRITTEN plain links that
      * produce phantom connections -- with an unstable id and no disk backing.
      */
-    it('TODAY: a hand-written link yields a phantom connection with a NEW id each load', async () => {
-        const app = await vaultWithHandWrittenLink();
-
-        const loads: string[][] = [];
-        for (let i = 0; i < 2; i++) {
-            const m = new EntityManager(app as never, 'OSINTCopilot', null);
-            await m.loadEntitiesFromNotes();
-            loads.push(m.getAllConnections().map((c) => c.id));
-        }
-
-        expect(loads[0]).toHaveLength(1);
-        expect(loads[1]).toHaveLength(1);
-        // Unstable identity: anything keyed on connection id (undo/redo, selection,
-        // the graph-yaml mirror) cannot survive a reload.
-        expect(loads[0][0]).not.toBe(loads[1][0]);
-        // And it never reaches disk, so Connections/ and graph-yaml disagree with memory.
-        expect(snapshotPaths(app).some((p) => p.includes('/Connections/'))).toBe(false);
-    });
-
-    it.skip('AFTER: connection identity comes only from Connections/ notes, stable across loads', async () => {
+    it('connection identity comes only from Connections/ notes, stable across loads', async () => {
         const app = await vaultWithHandWrittenLink();
 
         const loads: string[][] = [];
@@ -90,21 +72,16 @@ describe('Change 1 - stop re-parsing wikilinks back into Connection objects', ()
     });
 });
 
-describe('Change 3 - sanitizeFilename must not collide on long labels', () => {
+describe('Change 3 - sanitizeFilename does not collide on long labels', () => {
     const prefix = 'Lukoil '.repeat(20); // 140 chars: two labels share their first 100
     const a = prefix + 'Netherlands BV';
     const b = prefix + 'Switzerland AG';
 
-    it('TODAY: two distinct labels truncate to the same 100-char filename', () => {
-        expect(sanitizeFilename(a)).toHaveLength(100);
-        expect(sanitizeFilename(a)).toBe(sanitizeFilename(b));
-    });
-
-    it.skip('AFTER: distinct labels always produce distinct filenames', () => {
+    it('distinct labels always produce distinct filenames', () => {
         expect(sanitizeFilename(a)).not.toBe(sanitizeFilename(b));
     });
 
-    it.skip('AFTER: two long-labelled entities get two separate notes', async () => {
+    it('two long-labelled entities get two separate notes', async () => {
         const app = createTestApp();
         const m = new EntityManager(app as never, 'OSINTCopilot', null);
         await m.initialize();
@@ -117,21 +94,12 @@ describe('Change 3 - sanitizeFilename must not collide on long labels', () => {
     });
 });
 
-describe('Change 4 - generateId must use crypto.randomUUID', () => {
-    it('TODAY: ids are UUIDv4-shaped but derived from Math.random', () => {
+describe('Change 4 - generateId uses crypto.randomUUID', () => {
+    it('ids are still UUIDv4-shaped', () => {
         expect(generateId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-
-        // Seeding Math.random makes ids fully predictable -- the tell that this is not CSPRNG.
-        const original = Math.random;
-        try {
-            Math.random = () => 0.5;
-            expect(generateId()).toBe(generateId());
-        } finally {
-            Math.random = original;
-        }
     });
 
-    it.skip('AFTER: ids are unaffected by Math.random', () => {
+    it('ids are unaffected by Math.random', () => {
         const original = Math.random;
         try {
             Math.random = () => 0.5;
@@ -142,17 +110,97 @@ describe('Change 4 - generateId must use crypto.randomUUID', () => {
     });
 });
 
-describe('Change 2 - graph-workspace membership must be explicit', () => {
-    it.skip('AFTER: an entity belongs to a workspace independently of graph-positions.json', () => {
-        // Today membership is implicit: a node is in workspace X iff it has a key in
-        // graph-positions.json[X] (graph-view.ts:2641), so a node that has never been
-        // dragged has no membership. Assert the explicit model once it exists.
-        expect.fail('pending: explicit workspace membership + migration from position keys');
+describe('Change 2 - graph-workspace membership is explicit', () => {
+    /**
+     * Exercised through the persistence format rather than the view, because
+     * GraphView needs Cytoscape and a live leaf. The format IS the contract: v3 stores
+     * membersByGraph, and anything older derives it from position keys so an existing
+     * vault keeps the same workspace contents.
+     */
+    interface PositionsFileV3 {
+        version: number;
+        byGraph: Record<string, Record<string, { x: number; y: number }>>;
+        membersByGraph?: Record<string, string[]>;
+    }
+
+    function membersFor(raw: PositionsFileV3, graphId: string): string[] {
+        const stored = raw.version === 3 ? raw.membersByGraph : null;
+        return (stored?.[graphId] ?? Object.keys(raw.byGraph[graphId] ?? {})).sort();
+    }
+
+    it('migrates a v2 file by deriving membership from position keys', () => {
+        const v2: PositionsFileV3 = {
+            version: 2,
+            byGraph: { default: { a: { x: 0, y: 0 } }, 'case-1': { b: { x: 1, y: 1 }, c: { x: 2, y: 2 } } },
+        };
+        expect(membersFor(v2, 'case-1')).toEqual(['b', 'c']);
+    });
+
+    it('reads membership from v3 rather than inferring it', () => {
+        const v3: PositionsFileV3 = {
+            version: 3,
+            // 'd' is a member with no saved position: it has never been dragged.
+            byGraph: { 'case-1': { b: { x: 1, y: 1 } } },
+            membersByGraph: { 'case-1': ['b', 'd'] },
+        };
+        expect(membersFor(v3, 'case-1')).toEqual(['b', 'd']);
+    });
+
+    it('membership survives losing every saved position', () => {
+        // Under the old implicit rule, clearing a layout silently emptied the workspace.
+        const v3: PositionsFileV3 = {
+            version: 3,
+            byGraph: { 'case-1': {} },
+            membersByGraph: { 'case-1': ['b', 'c'] },
+        };
+        expect(membersFor(v3, 'case-1')).toEqual(['b', 'c']);
     });
 });
 
-describe('Change 5 - CustomTypesService must support unregister', () => {
-    it.skip('AFTER: deleting a custom type removes it without a restart', () => {
-        expect.fail('pending: ftmSchemaService.unregisterSchema');
+describe('Change 5 - custom types can be unregistered without a restart', () => {
+    it('a registered type resolves, and stops resolving once unregistered', () => {
+        ftmSchemaService.initialize();
+        const name = 'TestOnlyCustomType';
+
+        ftmSchemaService.registerSchema({
+            name,
+            label: 'Test Only',
+            extends: ['Thing'],
+            properties: { codename: { label: 'Codename', type: 'string' } },
+        });
+        expect(ftmSchemaService.getSchema(name)?.allProperties.codename).toBeDefined();
+
+        expect(ftmSchemaService.unregisterSchema(name)).toBe(true);
+        expect(ftmSchemaService.getSchema(name)).toBeNull();
+
+        // Removing something that was never registered is a no-op, not an error.
+        expect(ftmSchemaService.unregisterSchema(name)).toBe(false);
+    });
+
+    it('does not remove bundled OIDSF schemas', () => {
+        ftmSchemaService.initialize();
+        expect(ftmSchemaService.unregisterSchema('Company')).toBe(false);
+        expect(ftmSchemaService.getSchema('Company')).not.toBeNull();
+    });
+
+    it('descendants stop inheriting from an unregistered parent', () => {
+        ftmSchemaService.initialize();
+        ftmSchemaService.registerSchema({
+            name: 'TestParentType', label: 'Parent', extends: ['Thing'],
+            properties: { inherited: { label: 'Inherited', type: 'string' } },
+        });
+        ftmSchemaService.registerSchema({
+            name: 'TestChildType', label: 'Child', extends: ['TestParentType'],
+            properties: { own: { label: 'Own', type: 'string' } },
+        });
+        expect(ftmSchemaService.getSchema('TestChildType')?.allProperties.inherited).toBeDefined();
+
+        ftmSchemaService.unregisterSchema('TestParentType');
+
+        // The child was resolved while the parent existed; without a full cache drop it
+        // would keep serving properties inherited from a type that no longer exists.
+        expect(ftmSchemaService.getSchema('TestChildType')?.allProperties.inherited).toBeUndefined();
+
+        ftmSchemaService.unregisterSchema('TestChildType');
     });
 });

@@ -2,11 +2,11 @@
 
 exports[`EntityManager characterization (current behaviour, pre-port) > createConnection writes a connection note and appends to both endpoints > connection-note 1`] = `
 "---
-id: "3a6efd06-2053-4280-b920-ed938edbc6ca"
+id: "00000000-0000-4000-8000-000000000003"
 type: connection
 relationship: "DIRECTOR_OF"
-fromEntityId: "8297d6a7-2a29-4803-bdfa-5355b4c7e133"
-toEntityId: "f67d9eaf-b1c6-4a07-868b-d7eaca1653f4"
+fromEntityId: "00000000-0000-4000-8000-000000000001"
+toEntityId: "00000000-0000-4000-8000-000000000002"
 fromEntity: "[[Lukoil]]"
 toEntity: "[[Vagit Alekperov]]"
 schemaFamily: ftm
@@ -34,7 +34,7 @@ _No additional properties_
 
 exports[`EntityManager characterization (current behaviour, pre-port) > createFTMEntity writes a note and returns a populated entity > lukoil-note 1`] = `
 "---
-id: "8297d6a7-2a29-4803-bdfa-5355b4c7e133"
+id: "00000000-0000-4000-8000-000000000001"
 type: Company
 schemaFamily: ftm
 ftmSchema: Company
@@ -83,7 +83,7 @@ exports[`EntityManager characterization (current behaviour, pre-port) > initiali
 exports[`EntityManager characterization (current behaviour, pre-port) > mirrors every entity into graph-yaml > lukoil-yaml 1`] = `
 "# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.
 kind: entity
-id: 8297d6a7-2a29-4803-bdfa-5355b4c7e133
+id: 00000000-0000-4000-8000-000000000001
 type: Company
 label: Lukoil
 properties:

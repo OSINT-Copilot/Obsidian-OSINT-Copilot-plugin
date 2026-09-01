@@ -149,6 +149,15 @@ export class GraphView extends ItemView {
     private nodePositionsCache: Map<string, NodePosition> = new Map();
     /** Per-graph id → node id → position (persisted as JSON v2). */
     private allGraphPositions: Record<string, Record<string, NodePosition>> = {};
+    /**
+     * Explicit per-workspace membership.
+     *
+     * Membership used to be implicit -- an entity was "in" a workspace iff it had a
+     * saved position there -- which meant a node that had never been dragged did not
+     * belong anywhere, and clearing a layout silently emptied the workspace. Positions
+     * and membership are now separate facts. Migrated from position keys on first load.
+     */
+    private allGraphMembers: Record<string, Set<string>> = {};
     private graphHost: OSINTCopilotGraphHost;
     private graphSelectEl: HTMLSelectElement | null = null;
     private rearrangeLayout: RearrangeLayout = 'decentralized';
@@ -2589,15 +2598,36 @@ export class GraphView extends ItemView {
     }
 
     /**
-     * Default workspace shows all vault entities; other workspaces only show entities
-     * that have a saved position on that graph (membership = keys in nodePositionsCache).
+     * The default workspace shows every vault entity; a named workspace shows exactly
+     * its members. Membership is explicit and independent of layout, so rearranging or
+     * clearing positions no longer changes which entities belong to a graph.
      */
     private getEntitiesForActiveWorkspace(allEntities: Entity[]): Entity[] {
-        if (this.graphHost.getActiveGraphId() === 'default') {
+        const activeId = this.graphHost.getActiveGraphId();
+        if (activeId === 'default') {
             return allEntities;
         }
-        const allowed = new Set(this.nodePositionsCache.keys());
-        return allEntities.filter((e) => allowed.has(e.id));
+        const members = this.allGraphMembers[activeId] ?? new Set<string>();
+        return allEntities.filter((e) => members.has(e.id));
+    }
+
+    /** Adds entities to the active workspace. No-op on the default graph, which holds everything. */
+    addToActiveWorkspace(entityIds: string[]): void {
+        const activeId = this.graphHost.getActiveGraphId();
+        if (activeId === 'default') return;
+        const members = this.allGraphMembers[activeId] ?? new Set<string>();
+        for (const id of entityIds) members.add(id);
+        this.allGraphMembers[activeId] = members;
+        void this.savePositions();
+    }
+
+    removeFromActiveWorkspace(entityIds: string[]): void {
+        const activeId = this.graphHost.getActiveGraphId();
+        if (activeId === 'default') return;
+        const members = this.allGraphMembers[activeId];
+        if (!members) return;
+        for (const id of entityIds) members.delete(id);
+        void this.savePositions();
     }
 
     /**
@@ -3140,12 +3170,29 @@ export class GraphView extends ItemView {
                 const content = await this.app.vault.read(file);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const raw = JSON.parse(content) as any;
-                if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === 'object') {
+                if (raw && (raw.version === 2 || raw.version === 3) && raw.byGraph && typeof raw.byGraph === 'object') {
                     this.allGraphPositions = raw.byGraph as Record<string, Record<string, NodePosition>>;
                 } else {
                     // Legacy: flat map of nodeId → position → single default graph
                     const legacy = raw as Record<string, NodePosition>;
                     this.allGraphPositions = { default: legacy || {} };
+                }
+
+                // v3 stores membership explicitly. Anything older gets it derived from
+                // position keys, which is exactly what the old implicit rule meant --
+                // so an existing vault keeps the same workspace contents.
+                this.allGraphMembers = {};
+                const storedMembers = raw?.version === 3 ? raw.membersByGraph : null;
+                for (const graphId of Object.keys(this.allGraphPositions)) {
+                    const explicit = storedMembers?.[graphId] as string[] | undefined;
+                    this.allGraphMembers[graphId] = new Set(
+                        explicit ?? Object.keys(this.allGraphPositions[graphId] ?? {}),
+                    );
+                }
+                for (const graphId of Object.keys(storedMembers ?? {})) {
+                    if (!this.allGraphMembers[graphId]) {
+                        this.allGraphMembers[graphId] = new Set(storedMembers[graphId] as string[]);
+                    }
                 }
                 const activeId = this.graphHost.getActiveGraphId();
                 const slice = this.allGraphPositions[activeId] || {};
@@ -3174,7 +3221,22 @@ export class GraphView extends ItemView {
             const activeId = this.graphHost.getActiveGraphId();
             this.allGraphPositions[activeId] = Object.fromEntries(this.nodePositionsCache);
 
-            const content = JSON.stringify({ version: 2, byGraph: this.allGraphPositions }, null, 2);
+            // Positioning a node on a named graph still implies membership -- that is how
+            // nodes join a workspace today -- but membership now survives losing the position.
+            if (activeId !== 'default') {
+                const members = this.allGraphMembers[activeId] ?? new Set<string>();
+                for (const nodeId of this.nodePositionsCache.keys()) members.add(nodeId);
+                this.allGraphMembers[activeId] = members;
+            }
+
+            const membersByGraph: Record<string, string[]> = {};
+            for (const [graphId, members] of Object.entries(this.allGraphMembers)) {
+                membersByGraph[graphId] = [...members];
+            }
+            const content = JSON.stringify(
+                { version: 3, byGraph: this.allGraphPositions, membersByGraph },
+                null, 2,
+            );
             console.debug(`[GraphView] Saving graph "${activeId}" (${this.nodePositionsCache.size} nodes) to ${NODE_POSITIONS_FILE}`);
 
             // Ensure directory exists first

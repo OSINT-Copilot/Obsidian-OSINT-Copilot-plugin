@@ -239,11 +239,15 @@ export class EntityManager {
             }
         }
 
-        // Load connections from the Connections folder
+        // Connections come from Connections/ notes and nowhere else.
+        //
+        // Entity notes still RENDER their relationships as wikilinks, and those stay
+        // clickable via the app's link index -- but they are no longer parsed back
+        // into Connection objects. That round-trip minted a fresh random id on every
+        // load for any hand-written [[A]] REL [[B]] line, producing a connection with
+        // unstable identity and no note behind it: invisible to the graph-yaml mirror,
+        // and impossible for undo/redo or selection to track across a reload.
         await this.loadConnectionsFromNotes();
-
-        // Also parse connections from entity notes (for backward compatibility)
-        await this.parseConnectionsFromNotes();
 
         await this.syncAllGraphYamlFromMemory();
     }
@@ -562,71 +566,6 @@ export class EntityManager {
     /**
      * Parse connections from relationship sections in notes.
      */
-    private async parseConnectionsFromNotes(): Promise<void> {
-        for (const entity of this.entities.values()) {
-            if (!entity.filePath) continue;
-
-            const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-            if (!(file instanceof TFile)) continue;
-
-            const content = await this.app.vault.read(file);
-            const connections = this.parseRelationshipsFromContent(content, entity.id);
-
-            for (const conn of connections) {
-                this.connections.set(conn.id, conn);
-            }
-        }
-    }
-
-    /**
-     * Parse relationship wikilinks from note content.
-     */
-    private parseRelationshipsFromContent(content: string, fromEntityId: string): Connection[] {
-        const connections: Connection[] = [];
-
-        // Match pattern: [[Entity Name]] RELATIONSHIP_TYPE [[Target Entity]]
-        // or simpler: - [[Target Entity]] RELATIONSHIP_TYPE
-        const relationshipRegex = /\[\[([^\]]+)\]\]\s+([A-Z_]+)\s+\[\[([^\]]+)\]\]/g;
-        const simpleRegex = /-\s+\[\[([^\]]+)\]\]\s+([A-Z_]+)/g;
-
-        let match;
-
-        // Full relationship pattern
-        while ((match = relationshipRegex.exec(content)) !== null) {
-            const targetLabel = match[3];
-            const relationship = match[2];
-
-            // Find target entity by label
-            const targetEntity = this.findEntityByLabel(targetLabel);
-            if (targetEntity) {
-                connections.push({
-                    id: generateId(),
-                    fromEntityId,
-                    toEntityId: targetEntity.id,
-                    relationship
-                });
-            }
-        }
-
-        // Simple relationship pattern
-        while ((match = simpleRegex.exec(content)) !== null) {
-            const targetLabel = match[1];
-            const relationship = match[2];
-
-            const targetEntity = this.findEntityByLabel(targetLabel);
-            if (targetEntity && targetEntity.id !== fromEntityId) {
-                connections.push({
-                    id: generateId(),
-                    fromEntityId,
-                    toEntityId: targetEntity.id,
-                    relationship
-                });
-            }
-        }
-
-        return connections;
-    }
-
     /**
      * Find an entity by its label.
      */

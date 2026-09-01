@@ -89,6 +89,30 @@ class FTMSchemaServiceClass {
 		}
 	}
 
+	/**
+	 * Removes a runtime-registered custom schema. Bundled OIDSF schemas are not
+	 * removable -- only what registerSchema added.
+	 *
+	 * The whole resolved cache is dropped rather than just the removed entry.
+	 * resolveSchema flattens `extends` chains eagerly and a ResolvedFTMSchema records
+	 * only its direct parents, so there is no way to identify transitive descendants
+	 * after the fact -- and a descendant resolved while the parent existed would keep
+	 * serving inherited properties from a type that no longer exists. The cache is
+	 * pure memoization over ~141 schemas, so rebuilding it is cheap and unambiguously
+	 * correct.
+	 */
+	unregisterSchema(schemaName: string): boolean {
+		const canon = canonicalSchemaName(schemaName);
+		if (!this.customSchemas.delete(canon)) return false;
+
+		this.resolvedSchemas.clear();
+		if (this.initialized) {
+			for (const name of Object.keys(ALL_SCHEMAS)) this.resolveSchema(name);
+			for (const name of this.customSchemas.keys()) this.resolveSchema(name);
+		}
+		return true;
+	}
+
 	private resolveSchema(schemaName: string): ResolvedFTMSchema | null {
 		const canon = canonicalSchemaName(schemaName);
 		if (this.resolvedSchemas.has(canon)) {
