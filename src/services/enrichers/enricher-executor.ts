@@ -2,6 +2,7 @@ import { normalizePath, requestUrl, TFile, type RequestUrlResponse, type Vault }
 import { DEFAULT_CREDENTIALS_FOLDER } from "../../constants/vault-layout";
 import { normalizeCredentialsRelativePath } from "../custom-vault-operations";
 import type { EnricherSpec } from "./enricher-schema";
+import { host } from '../../host';
 
 /**
  * Pause between consecutive enricher HTTP calls in unified chat. Some APIs (e.g. LeakCheck)
@@ -108,7 +109,7 @@ async function authHeader(
     return { [cfg.headerName || "X-API-Key"]: secret };
   }
   const envVar = cfg.envVar || "";
-  const secret = envVar ? process.env[envVar] : "";
+  const secret = envVar ? await host.env.get(envVar) : "";
   if (!secret) throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
   if (cfg.type === "bearer_env") {
     return { Authorization: `Bearer ${secret}` };
@@ -132,7 +133,7 @@ export async function executeEnricherHttp(
   const credRoot = credentialsFolder ?? DEFAULT_CREDENTIALS_FOLDER;
   if (spec.auth.type === "query_env") {
     const envVar = spec.auth.envVar || "";
-    const secret = envVar ? process.env[envVar] : "";
+    const secret = envVar ? await host.env.get(envVar) : "";
     if (!secret) throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
     url.searchParams.set(spec.auth.queryParam || "api_key", secret);
   } else if (spec.auth.type === "query_vault") {

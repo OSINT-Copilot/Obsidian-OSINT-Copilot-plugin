@@ -8,6 +8,7 @@
  */
 import { app, BrowserWindow, session, shell } from 'electron';
 import * as path from 'path';
+import { platformSnapshotArg, registerHostHandlers } from './ipc';
 
 const RENDERER_DIR = path.join(__dirname, 'renderer');
 
@@ -33,6 +34,7 @@ function createWindow(): BrowserWindow {
         backgroundColor: '#1e1e1e',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
+            additionalArguments: [platformSnapshotArg()],
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
@@ -85,6 +87,8 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
+    registerHostHandlers();
+
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
         callback({
             responseHeaders: {

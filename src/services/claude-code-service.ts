@@ -1,6 +1,8 @@
 import { Entity, ProcessTextResponse, AIOperation, type OsintSourceInput } from '../entities/types';
 import { splitCliArgsLine } from './agent-runtime/cli-args';
 import { resolveCliPath, buildCliNotFoundMessage, platformExecutableCandidates } from '../utils/resolve-binary-path';
+import { host } from '../host';
+import { join } from '../host/paths';
 
 export interface ClaudeCodeConfig {
     cliPath: string;
@@ -92,6 +94,9 @@ export function sanitizeCliOutput(text: string, maxLen = 500): string {
 }
 
 export class ClaudeCodeService implements LocalCliService {
+    /** Monotonic suffix so concurrent execs get distinct, killable ids. */
+    protected static execSeq = 0;
+
     readonly providerId: string = 'claude-code';
     readonly displayName: string = 'Claude Code';
     /** Exact Settings field label for this CLI's path, referenced in "not found" error messages. */
@@ -118,13 +123,11 @@ export class ClaudeCodeService implements LocalCliService {
 
     /** Extra binary-specific locations beyond resolveCliPath's generic candidate list. */
     protected cliCandidatePaths(configuredName: string): string[] {
-        const os = require('os') as typeof import('os');
-        const path = require('path') as typeof import('path');
-        const home = os.homedir();
+        const home = host.platform.homedir;
         return [
-            path.join(home, '.claude/local', configuredName),
-            path.join(home, '.npm-global/bin', configuredName),
-            path.join(home, '.volta/bin', configuredName),
+            join(home, '.claude/local', configuredName),
+            join(home, '.npm-global/bin', configuredName),
+            join(home, '.volta/bin', configuredName),
         ].flatMap(platformExecutableCandidates);
     }
 
@@ -163,14 +166,10 @@ export class ClaudeCodeService implements LocalCliService {
                 console.warn(`[${this.displayName}] vault skill resolver failed:`, e);
             }
         }
-        try {
-            const nodePath = require('path') as typeof import('path');
-            const nodeFs = require('fs') as typeof import('fs');
-            const skillPath = nodePath.join(this.pluginDir, SKILL_FILE);
-            return nodeFs.readFileSync(skillPath, 'utf-8');
-        } catch {
-            return this.getFallbackSkill();
-        }
+        // The former `<pluginDir>/SKILL.md` tier is gone: a standalone app has no plugin
+        // directory, and the vault copy at custom/prompts/skills/graph-extraction.md is
+        // bootstrapped on first run, so the resolver above is the real override point.
+        return this.getFallbackSkill();
     }
 
     private getFallbackSkill(): string {
@@ -289,147 +288,115 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             throw new DOMException('Aborted', 'AbortError');
         }
 
-        return new Promise((resolve, reject) => {
-            const { execFile } = require('child_process') as typeof import('child_process');
+        const extra = splitCliArgsLine(this.config.extraCliArgs ?? '');
+        const args = this.buildCliArgs(maxTurns, extra, imagePaths);
+        const cwd = this.config.cliWorkingDirectory?.trim();
 
-            // Tracks whether *our* AbortSignal triggered the kill, as opposed to execFile's own
-            // `timeout` option killing a slow-running process — both present identically as
-            // `error.killed`/`error.signal === 'SIGTERM'`, but only the former is a real cancel.
-            let killedByAbortSignal = false;
-            let onAbort: (() => void) | null = null;
-            let settled = false;
+        logOptions?.emit?.({
+            phase: 'invoke_start',
+            level: 'info',
+            message: `Running ${this.displayName}: ${cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ''}`,
+            details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+            timestamp: Date.now(),
+        });
 
-            const rejectOnce = (error: Error): void => {
-                if (settled) return;
-                settled = true;
-                reject(error);
-            };
+        // Tracks whether *our* AbortSignal triggered the kill, as opposed to the
+        // exec timeout killing a slow process -- both present identically as
+        // killed/SIGTERM, but only the former is a real cancel.
+        let killedByAbortSignal = false;
+        const execId = `${this.displayName}-${Date.now()}-${++ClaudeCodeService.execSeq}`;
+        const onAbort = () => {
+            killedByAbortSignal = true;
+            host.cli.kill(execId);
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
 
-            const extra = splitCliArgsLine(this.config.extraCliArgs ?? '');
-            const args = this.buildCliArgs(maxTurns, extra, imagePaths);
+        let result;
+        try {
+            result = await host.cli.exec(execId, cliPath, args, {
+                timeoutMs: this.config.timeoutMs,
+                maxBuffer: 10 * 1024 * 1024,
+                envOverrides: { NO_COLOR: '1' },
+                ...(cwd ? { cwd } : {}),
+                // The host owns the stdin write, including the EPIPE guard that an
+                // unhandled rejection here used to turn into a renderer crash.
+                stdin: prompt,
+            });
+        } finally {
+            signal?.removeEventListener('abort', onAbort);
+        }
 
-            const cwd = this.config.cliWorkingDirectory?.trim();
+        logOptions?.emit?.({
+            phase: 'stdin_sent',
+            level: 'debug',
+            message: `Prompt sent to ${this.displayName} stdin`,
+            timestamp: Date.now(),
+        });
+
+        const errOut = result.stderr?.trim() ?? '';
+        const stdOut = result.stdout?.trim() ?? '';
+
+        if (result.errorMessage !== undefined) {
+            if (killedByAbortSignal) {
+                logOptions?.emit?.({
+                    phase: 'invoke_aborted',
+                    level: 'warn',
+                    message: `${this.displayName} process aborted`,
+                    timestamp: Date.now(),
+                });
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
+            if (result.code === 'ENOENT') {
+                // Auto-detection in getResolvedCliPath() already tried common install
+                // locations and the login shell PATH before falling back to this bare
+                // spawn attempt -- if it still resolves to nothing, only an explicit
+                // path from the user can fix it.
+                const message = buildCliNotFoundMessage(
+                    this.displayName,
+                    cliPath,
+                    this.config.cliPath?.trim() || this.defaultCliName,
+                    this.cliPathSettingLabel,
+                );
+                logOptions?.emit?.({
+                    phase: 'invoke_error',
+                    level: 'error',
+                    message: `${this.displayName} CLI not found`,
+                    details: message,
+                    timestamp: Date.now(),
+                });
+                console.error(`[${this.displayName}] CLI not found`, { triedPath: cliPath });
+                throw new Error(message);
+            }
+
+            // Some CLIs print fatal messages on stdout; include both for notices and logs.
+            const combined = [errOut, stdOut].filter(Boolean).join('\n');
+            const timedOut = result.killed || result.signal === 'SIGTERM';
+            // A timeout kill leaves no useful stderr/stdout, and Node's own error message
+            // ("Command failed: ...") is just the invoked command line, not a real
+            // explanation -- prefer the clear timeout message over that generic text.
+            const tail = combined ||
+                (timedOut ? `${this.displayName} timed out after ${this.config.timeoutMs}ms and was killed` : null) ||
+                result.errorMessage || 'unknown error';
             logOptions?.emit?.({
-                phase: 'invoke_start',
-                level: 'info',
-                message: `Running ${this.displayName}: ${cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ''}`,
-                details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+                phase: 'invoke_error',
+                level: 'error',
+                message: `${this.displayName} failed (code ${result.code})`,
+                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
                 timestamp: Date.now(),
             });
-            const child = execFile(
-                cliPath,
-                args,
-                {
-                    timeout: this.config.timeoutMs,
-                    maxBuffer: 10 * 1024 * 1024,
-                    env: { ...process.env, NO_COLOR: '1' },
-                    ...(cwd ? { cwd } : {}),
-                },
-                (error: any, stdout: string, stderr: string) => {
-                    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-                    if (settled) return;
-                    settled = true;
-                    const errOut = stderr?.trim() ?? '';
-                    const stdOut = stdout?.trim() ?? '';
-                    if (error) {
-                        if (killedByAbortSignal) {
-                            logOptions?.emit?.({
-                                phase: 'invoke_aborted',
-                                level: 'warn',
-                                message: `${this.displayName} process aborted`,
-                                timestamp: Date.now(),
-                            });
-                            reject(new DOMException('Aborted', 'AbortError'));
-                        } else if (error.code === 'ENOENT') {
-                            // Auto-detection in getResolvedCliPath() already tried common install
-                            // locations and the login shell PATH before falling back to this bare
-                            // spawn attempt -- if it still resolves to nothing, only an explicit
-                            // path from the user can fix it.
-                            const message = buildCliNotFoundMessage(
-                                this.displayName,
-                                cliPath,
-                                this.config.cliPath?.trim() || this.defaultCliName,
-                                this.cliPathSettingLabel,
-                            );
-                            logOptions?.emit?.({
-                                phase: 'invoke_error',
-                                level: 'error',
-                                message: `${this.displayName} CLI not found`,
-                                details: message,
-                                timestamp: Date.now(),
-                            });
-                            console.error(`[${this.displayName}] CLI not found`, { triedPath: cliPath });
-                            reject(new Error(message));
-                        } else {
-                            // Some CLIs print fatal messages on stdout; include both for Obsidian notices and logs.
-                            const combined = [errOut, stdOut].filter(Boolean).join('\n');
-                            const timedOut = error.killed || error.signal === 'SIGTERM';
-                            // A timeout kill leaves no useful stderr/stdout, and Node's own error.message
-                            // ("Command failed: ...") is just the invoked command line, not a real
-                            // explanation — prefer the clear timeout message over that generic text.
-                            const tail = combined ||
-                                (timedOut ? `${this.displayName} timed out after ${this.config.timeoutMs}ms and was killed` : null) ||
-                                error.message || 'unknown error';
-                            logOptions?.emit?.({
-                                phase: 'invoke_error',
-                                level: 'error',
-                                message: `${this.displayName} failed (code ${error.code})`,
-                                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
-                                timestamp: Date.now(),
-                            });
-                            console.error(`[${this.displayName}] CLI failed`, { code: error.code, stderr: errOut, stdout: stdOut });
-                            reject(new Error(`${this.displayName} error (code ${error.code}): ${tail}`));
-                        }
-                        return;
-                    }
-                    logOptions?.emit?.({
-                        phase: 'invoke_exit',
-                        level: 'info',
-                        message: `${this.displayName} completed successfully`,
-                        details: logOptions?.rawCli ? stdOut : sanitizeCliOutput(stdOut, 400),
-                        timestamp: Date.now(),
-                    });
-                    resolve(stdout);
-                },
-            );
+            console.error(`[${this.displayName}] CLI failed`, { code: result.code, stderr: errOut, stdout: stdOut });
+            throw new Error(`${this.displayName} error (code ${result.code}): ${tail}`);
+        }
 
-            if (signal) {
-                onAbort = () => {
-                    killedByAbortSignal = true;
-                    child.kill('SIGTERM');
-                };
-                signal.addEventListener('abort', onAbort, { once: true });
-                if (signal.aborted) onAbort();
-            }
-
-            if (!killedByAbortSignal) {
-                const stdin = child.stdin;
-                if (stdin) {
-                    // A CLI can reject argv and exit before a large prompt is written. Without
-                    // an error listener Node treats the resulting EPIPE as an uncaught exception.
-                    stdin.on('error', (stdinError: NodeJS.ErrnoException) => {
-                        if (stdinError.code === 'EPIPE' || killedByAbortSignal || child.killed) return;
-                        child.kill('SIGTERM');
-                        rejectOnce(new Error(`${this.displayName} stdin error: ${stdinError.message}`));
-                    });
-                    try {
-                        stdin.end(prompt, () => {
-                            if (settled || killedByAbortSignal) return;
-                            logOptions?.emit?.({
-                                phase: 'stdin_sent',
-                                level: 'debug',
-                                message: `Prompt sent to ${this.displayName} stdin`,
-                                timestamp: Date.now(),
-                            });
-                        });
-                    } catch (stdinError) {
-                        child.kill('SIGTERM');
-                        const message = stdinError instanceof Error ? stdinError.message : String(stdinError);
-                        rejectOnce(new Error(`${this.displayName} stdin error: ${message}`));
-                    }
-                }
-            }
+        logOptions?.emit?.({
+            phase: 'invoke_exit',
+            level: 'info',
+            message: `${this.displayName} completed successfully`,
+            details: logOptions?.rawCli ? stdOut : sanitizeCliOutput(stdOut, 400),
+            timestamp: Date.now(),
         });
+        return result.stdout;
     }
 
     private parseResponse(raw: string): any | null {
@@ -567,20 +534,14 @@ Return ONLY the extracted information as plain text. No markdown formatting, no 
     async isAvailable(): Promise<boolean> {
         try {
             const cliPath = await this.getResolvedCliPath();
-            return await new Promise((resolve) => {
-                try {
-                    const { execFile } = require('child_process') as typeof import('child_process');
-                    const cwd = this.config.cliWorkingDirectory?.trim();
-                    execFile(cliPath, ['--version'], {
-                        timeout: 5000,
-                        ...(cwd ? { cwd } : {}),
-                    }, (error: any) => {
-                        resolve(!error);
-                    });
-                } catch {
-                    resolve(false);
-                }
-            });
+            const cwd = this.config.cliWorkingDirectory?.trim();
+            const result = await host.cli.exec(
+                `${this.displayName}-version-${Date.now()}-${++ClaudeCodeService.execSeq}`,
+                cliPath,
+                ['--version'],
+                { timeoutMs: 5000, ...(cwd ? { cwd } : {}) },
+            );
+            return result.errorMessage === undefined;
         } catch {
             return false;
         }

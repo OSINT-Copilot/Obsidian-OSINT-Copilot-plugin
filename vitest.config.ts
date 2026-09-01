@@ -8,6 +8,7 @@ export default defineConfig({
         globals: true,
         alias: {
             'obsidian': path.resolve(__dirname, './tests/obsidian-mock.ts'),
+            'host-impl': path.resolve(__dirname, './src/host/impl.ts'),
             '../main': path.resolve(__dirname, './main.ts'),
         },
     },

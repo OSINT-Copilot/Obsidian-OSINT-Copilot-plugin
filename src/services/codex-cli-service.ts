@@ -1,6 +1,8 @@
 import { ClaudeCodeService, type ClaudeCodeConfig } from './claude-code-service';
 import { splitCliArgsLine } from './agent-runtime/cli-args';
 import { platformExecutableCandidates } from '../utils/resolve-binary-path';
+import { host } from '../host';
+import { join } from '../host/paths';
 
 export interface CodexCliConfig extends ClaudeCodeConfig {}
 
@@ -43,7 +45,7 @@ const FRAMEWORK_OWNED_CODEX_SHORT_ARGS = new Set(['-a', '-s', '-C', '-o', '-i', 
  * without attempting that unsupported nested Bubblewrap sandbox.
  */
 function needsFlatpakLandlockFallback(): boolean {
-    return process.platform === 'linux' && Boolean(process.env.FLATPAK_ID?.trim());
+    return host.platform.isFlatpak;
 }
 
 /**
@@ -103,6 +105,8 @@ function hasExternalProviderSelection(extra: string[]): boolean {
  * intentionally ephemeral because the plugin supplies its own conversation memory.
  */
 export class CodexCliService extends ClaudeCodeService {
+    private static loginSeq = 0;
+
     override readonly providerId: string = 'codex';
     override readonly displayName: string = 'Codex CLI';
     protected override readonly cliPathSettingLabel: string = 'Codex CLI path';
@@ -123,12 +127,10 @@ export class CodexCliService extends ClaudeCodeService {
      * installed the same ways) but drop the Claude-specific one.
      */
     protected override cliCandidatePaths(configuredName: string): string[] {
-        const os = require('os') as typeof import('os');
-        const path = require('path') as typeof import('path');
-        const home = os.homedir();
+        const home = host.platform.homedir;
         return [
-            path.join(home, '.npm-global/bin', configuredName),
-            path.join(home, '.volta/bin', configuredName),
+            join(home, '.npm-global/bin', configuredName),
+            join(home, '.volta/bin', configuredName),
         ].flatMap(platformExecutableCandidates);
     }
 
@@ -173,33 +175,28 @@ export class CodexCliService extends ClaudeCodeService {
                 message: error instanceof Error ? error.message : String(error),
             };
         }
-        return new Promise((resolve) => {
-            try {
-                const { execFile } = require('child_process') as typeof import('child_process');
-                execFile(
-                    cliPath,
-                    ['login', 'status'],
-                    {
-                        encoding: 'utf8',
-                        timeout: 8_000,
-                        maxBuffer: 1024 * 1024,
-                        env: { ...process.env, NO_COLOR: '1' },
-                        ...(this.config.cliWorkingDirectory?.trim()
-                            ? { cwd: this.config.cliWorkingDirectory.trim() }
-                            : {}),
-                    },
-                    (error: Error | null, stdout: string, stderr: string) => {
-                        const message = (stdout || stderr || error?.message || 'Not logged in').trim();
-                        resolve({ authenticated: !error, message });
-                    },
-                );
-            } catch (error) {
-                resolve({
-                    authenticated: false,
-                    message: error instanceof Error ? error.message : String(error),
-                });
-            }
-        });
+        try {
+            const result = await host.cli.exec(
+                `codex-login-${Date.now()}-${++CodexCliService.loginSeq}`,
+                cliPath,
+                ['login', 'status'],
+                {
+                    timeoutMs: 8_000,
+                    maxBuffer: 1024 * 1024,
+                    envOverrides: { NO_COLOR: '1' },
+                    ...(this.config.cliWorkingDirectory?.trim()
+                        ? { cwd: this.config.cliWorkingDirectory.trim() }
+                        : {}),
+                },
+            );
+            const message = (result.stdout || result.stderr || result.errorMessage || 'Not logged in').trim();
+            return { authenticated: result.errorMessage === undefined, message };
+        } catch (error) {
+            return {
+                authenticated: false,
+                message: error instanceof Error ? error.message : String(error),
+            };
+        }
     }
 
     /** A remote Codex run needs saved CLI authentication; explicit OSS runs do not. */

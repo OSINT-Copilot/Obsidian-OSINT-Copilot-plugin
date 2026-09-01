@@ -55,7 +55,10 @@ const electronProcessConfig = (entry, outfile) => ({
   platform: "node",
   format: "cjs",
   target: "node20",
-  external: ["electron"],
+  // Native/optional-native deps stay external: main runs in Node and resolves them
+  // from node_modules at runtime (electron-builder ships them). pdfjs-dist's legacy
+  // build optionally requires `canvas`, which is a .node binary esbuild cannot bundle.
+  external: ["electron", "pdfjs-dist", "canvas"],
   outfile: path.join(OUT, outfile),
   sourcemap: prod ? false : "inline",
   minify: prod,
@@ -82,6 +85,10 @@ const rendererConfig = {
     // Not yet a full module -- Phase 2 adds src/obsidian-shim/index.ts and this
     // starts resolving real imports. Harmless until then: nothing imports it.
     obsidian: path.resolve("src/obsidian-shim"),
+    // THE sandbox switch: the renderer gets the window.host forwarder, never the
+    // Node implementation. If this alias is ever dropped, the renderer build fails
+    // to resolve child_process/fs rather than silently shipping them.
+    "host-impl": path.resolve("src/host/impl.bridge.ts"),
   },
 };
 

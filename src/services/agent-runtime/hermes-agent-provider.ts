@@ -1,10 +1,10 @@
-import { execFile } from 'child_process';
 import { buildUnifiedAgentSystemPrompt, buildUnifiedAgentUserPrompt } from './build-unified-agent-prompt';
 import { parseAgentTurnResult } from './parse-agent-turn-json';
 import type { AgentProvider, AgentTurnContext, AgentTurnResult } from './provider-types';
 import { splitCliArgsLine } from './cli-args';
 import { resolveCliPath, buildCliNotFoundMessage } from '../../utils/resolve-binary-path';
 import { sanitizeCliOutput, type ExtractionLogOptions } from '../claude-code-service';
+import { host } from '../../host';
 
 export interface HermesAgentRuntimeConfig {
     cliPath: string;
@@ -33,6 +33,8 @@ export interface HermesAgentRuntimeConfig {
 }
 
 export class HermesAgentProvider implements AgentProvider {
+    private static execSeq = 0;
+
     readonly id = 'hermes-agent' as const;
 
     constructor(public readonly cfg: HermesAgentRuntimeConfig) {}
@@ -77,166 +79,102 @@ export class HermesAgentProvider implements AgentProvider {
             throw new DOMException('Aborted', 'AbortError');
         }
         const cwd = this.cfg.cliWorkingDirectory?.trim();
-        return new Promise((resolve, reject) => {
-            let settled = false;
-            let onAbort: (() => void) | null = null;
-            const rejectOnce = (err: Error): void => {
-                if (settled) return;
-                settled = true;
-                reject(err);
-            };
+        logOptions?.emit?.({
+            phase: 'invoke_start',
+            level: 'info',
+            message: `Running ${this.cfg.displayName}: ${cliPath}${args.length ? ` (+${args.length} extra arg(s))` : ''}`,
+            details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+            timestamp: Date.now(),
+        });
 
+        const execId = `hermes-${Date.now()}-${++HermesAgentProvider.execSeq}`;
+        const onAbort = () => host.cli.kill(execId);
+        signal?.addEventListener('abort', onAbort, { once: true });
+
+        let result;
+        try {
+            result = await host.cli.exec(execId, cliPath, args, {
+                timeoutMs: this.cfg.timeoutMs || 120_000,
+                maxBuffer: 10 * 1024 * 1024,
+                envOverrides: { NO_COLOR: '1' },
+                ...(cwd ? { cwd } : {}),
+                // The host owns the stdin write and its EPIPE guard -- an unhandled
+                // EPIPE here used to crash the renderer.
+                stdin: prompt,
+            });
+        } finally {
+            signal?.removeEventListener('abort', onAbort);
+        }
+
+        if (result.errorMessage !== undefined) {
+            if (result.killed || result.signal === 'SIGTERM') {
+                logOptions?.emit?.({
+                    phase: 'invoke_aborted',
+                    level: 'warn',
+                    message: `${this.cfg.displayName} process aborted`,
+                    timestamp: Date.now(),
+                });
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            if (result.code === 'ENOENT') {
+                const notFoundMessage = buildCliNotFoundMessage(
+                    'Hermes/custom',
+                    cliPath,
+                    this.cfg.cliPath?.trim() || 'hermes',
+                    this.cfg.settingLabel,
+                );
+                logOptions?.emit?.({
+                    phase: 'invoke_error',
+                    level: 'error',
+                    message: `${this.cfg.displayName} CLI not found`,
+                    details: notFoundMessage,
+                    timestamp: Date.now(),
+                });
+                throw new Error(notFoundMessage);
+            }
+            const tail = result.stderr || result.errorMessage;
             logOptions?.emit?.({
-                phase: 'invoke_start',
-                level: 'info',
-                message: `Running ${this.cfg.displayName}: ${cliPath}${args.length ? ` (+${args.length} extra arg(s))` : ''}`,
-                details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+                phase: 'invoke_error',
+                level: 'error',
+                message: `${this.cfg.displayName} failed (code ${result.code ?? '?'})`,
+                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
                 timestamp: Date.now(),
             });
-            const child = execFile(
-                cliPath,
-                args,
-                {
-                    encoding: 'utf8',
-                    timeout: this.cfg.timeoutMs || 120_000,
-                    maxBuffer: 10 * 1024 * 1024,
-                    env: { ...process.env, NO_COLOR: '1' },
-                    ...(cwd ? { cwd } : {}),
-                },
-                (error: Error | null, stdout: string, stderr: string) => {
-                    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-                    if (settled) return;
-                    settled = true;
-                    if (error) {
-                        const anyErr = error as { killed?: boolean; signal?: string; code?: string | number | null };
-                        if (anyErr.killed || anyErr.signal === 'SIGTERM') {
-                            logOptions?.emit?.({
-                                phase: 'invoke_aborted',
-                                level: 'warn',
-                                message: `${this.cfg.displayName} process aborted`,
-                                timestamp: Date.now(),
-                            });
-                            reject(new DOMException('Aborted', 'AbortError'));
-                        } else if (anyErr.code === 'ENOENT') {
-                            const notFoundMessage = buildCliNotFoundMessage(
-                                'Hermes/custom',
-                                cliPath,
-                                this.cfg.cliPath?.trim() || 'hermes',
-                                this.cfg.settingLabel,
-                            );
-                            logOptions?.emit?.({
-                                phase: 'invoke_error',
-                                level: 'error',
-                                message: `${this.cfg.displayName} CLI not found`,
-                                details: notFoundMessage,
-                                timestamp: Date.now(),
-                            });
-                            reject(new Error(notFoundMessage));
-                        } else {
-                            const tail = stderr || error.message;
-                            logOptions?.emit?.({
-                                phase: 'invoke_error',
-                                level: 'error',
-                                message: `${this.cfg.displayName} failed (code ${anyErr.code ?? '?'})`,
-                                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
-                                timestamp: Date.now(),
-                            });
-                            reject(
-                                new Error(
-                                    `Hermes CLI error (code ${anyErr.code ?? '?'}): ${tail}`,
-                                ),
-                            );
-                        }
-                        return;
-                    }
-                    logOptions?.emit?.({
-                        phase: 'invoke_exit',
-                        level: 'info',
-                        message: `${this.cfg.displayName} completed successfully`,
-                        details: logOptions?.rawCli ? (stdout || '') : sanitizeCliOutput(stdout || '', 400),
-                        timestamp: Date.now(),
-                    });
-                    resolve(stdout || '');
-                },
-            );
+            throw new Error(`Hermes CLI error (code ${result.code ?? '?'}): ${tail}`);
+        }
 
-            const stdin = child.stdin;
-            if (stdin) {
-                // A CLI can reject argv and exit before a large prompt is written. Without an
-                // error listener Node treats the resulting EPIPE as an uncaught exception,
-                // crashing the Obsidian renderer -- the same fix already applied to
-                // ClaudeCodeService.invokeCLI.
-                stdin.on('error', (stdinError: NodeJS.ErrnoException) => {
-                    if (stdinError.code === 'EPIPE' || settled || child.killed) return;
-                    child.kill('SIGTERM');
-                    rejectOnce(new Error(`Hermes CLI stdin error: ${stdinError.message}`));
-                });
-                try {
-                    stdin.write(prompt);
-                    stdin.end();
-                } catch (stdinError) {
-                    child.kill('SIGTERM');
-                    const message = stdinError instanceof Error ? stdinError.message : String(stdinError);
-                    rejectOnce(new Error(`Hermes CLI stdin error: ${message}`));
-                }
-            }
-
-            if (signal) {
-                onAbort = () => {
-                    child.kill('SIGTERM');
-                };
-                signal.addEventListener('abort', onAbort, { once: true });
-                if (signal.aborted) onAbort();
-            }
+        logOptions?.emit?.({
+            phase: 'invoke_exit',
+            level: 'info',
+            message: `${this.cfg.displayName} completed successfully`,
+            details: logOptions?.rawCli ? (result.stdout || '') : sanitizeCliOutput(result.stdout || '', 400),
+            timestamp: Date.now(),
         });
+        return result.stdout || '';
     }
 
     async healthCheck(): Promise<boolean> {
         const args = splitCliArgsLine(this.cfg.healthCheckArgs);
         const cliPath = await resolveCliPath(this.cfg.cliPath, 'hermes');
         const cwd = this.cfg.cliWorkingDirectory?.trim();
-        try {
-            await new Promise<void>((resolve, reject) => {
-                execFile(
-                    cliPath,
-                    args.length ? args : ['--version'],
-                    {
-                        encoding: 'utf8',
-                        timeout: 8000,
-                        maxBuffer: 1024 * 1024,
-                        env: { ...process.env, NO_COLOR: '1' },
-                        ...(cwd ? { cwd } : {}),
-                    },
-                    (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    },
-                );
-            });
-            return true;
-        } catch {
-            try {
-                await new Promise<void>((resolve, reject) => {
-                    execFile(
-                        cliPath,
-                        ['-h'],
-                        {
-                            encoding: 'utf8',
-                            timeout: 8000,
-                            maxBuffer: 1024 * 1024,
-                            env: { ...process.env, NO_COLOR: '1' },
-                            ...(cwd ? { cwd } : {}),
-                        },
-                        (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        },
-                    );
-                });
-                return true;
-            } catch {
-                return false;
-            }
-        }
+        const probe = async (probeArgs: string[]): Promise<boolean> => {
+            const result = await host.cli.exec(
+                `hermes-health-${Date.now()}-${++HermesAgentProvider.execSeq}`,
+                cliPath,
+                probeArgs,
+                {
+                    timeoutMs: 8000,
+                    maxBuffer: 1024 * 1024,
+                    envOverrides: { NO_COLOR: '1' },
+                    ...(cwd ? { cwd } : {}),
+                },
+            );
+            return result.errorMessage === undefined;
+        };
+
+        // Two-step: the configured health-check args (default --version), then -h for
+        // CLIs that have no version flag but do respond to help.
+        if (await probe(args.length ? args : ['--version'])) return true;
+        return probe(['-h']);
     }
 }

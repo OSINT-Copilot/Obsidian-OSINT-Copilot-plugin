@@ -19,28 +19,7 @@ import {
     type ExtractionLogOptions,
     type LocalCliService,
 } from './claude-code-service';
-
-/** Minimal surface of pdfjs-dist's legacy Node build used for text extraction (no bundled .d.ts for this subpath). */
-interface PdfTextItem {
-    str?: string;
-    /** True when this item ends a visual line (pdf.js layout hint, used to rebuild line breaks). */
-    hasEOL?: boolean;
-}
-interface PdfPageProxy {
-    getTextContent(): Promise<{ items: PdfTextItem[] }>;
-    cleanup?: () => void;
-}
-interface PdfDocumentProxy {
-    numPages: number;
-    getPage(pageNumber: number): Promise<PdfPageProxy>;
-    destroy(): Promise<void>;
-}
-interface PdfJsLib {
-    getDocument(params: { data: Uint8Array; isEvalSupported?: boolean }): { promise: Promise<PdfDocumentProxy> };
-}
-interface PdfJsWorkerModule {
-    WorkerMessageHandler: unknown;
-}
+import { host } from '../host';
 
 /** Optional tuning for vault ingest: smaller chunks + per-chunk callback for live UI. */
 export interface VaultProcessTextChunkOptions {
@@ -339,192 +318,21 @@ export class GraphApiService {
     }
 
     /** Pages processed per batch, bounding peak memory/CPU for very long documents. */
-    private static readonly PDF_PAGE_BATCH_SIZE = 8;
     /**
-     * Overall wall-clock bound. Unlike the old execFile-based approach, there's no way to kill
-     * in-process pdf.js parsing outright — this only bounds how long the caller waits; a
-     * pathological PDF's parsing may keep running in the background after the promise settles.
-     */
-    private static readonly PDF_EXTRACTION_TIMEOUT_MS = 60_000;
-
-    /** Rebuilds line breaks from pdf.js's per-item hasEOL layout hint instead of flattening a page to one run-on line. */
-    private static joinPdfTextItems(items: PdfTextItem[]): string {
-        let out = '';
-        for (const item of items) {
-            out += item.str ?? '';
-            out += item.hasEOL ? '\n' : ' ';
-        }
-        return out;
-    }
-
-    /**
-     * Extract text from PDF using pdfjs-dist (bundled, no external binary required).
+     * PDF and DOCX text extraction run in the Electron main process.
      *
-     * We ship one bundled main.js, not a set of files, so pdf.js can't load a separate
-     * pdf.worker.mjs from disk/URL at runtime the way it normally would. Registering the
-     * worker module's WorkerMessageHandler on globalThis.pdfjsWorker before calling
-     * getDocument() is pdf.js's own documented "run on the main thread" escape hatch — its
-     * PDFWorker checks that global first and, when present, uses it directly instead of
-     * dynamically importing GlobalWorkerOptions.workerSrc (which we deliberately never set).
-     * This is intentional, not a workaround: we only need one-shot text extraction, not a
-     * responsive multi-threaded renderer.
+     * pdfjs-dist's legacy build and zlib.inflateRawSync are both Node-only, so under a
+     * sandboxed renderer they cannot live here. Moving them also removed
+     * globalThis.pdfjsWorker -- a module-level global that used to survive plugin
+     * unload -- from the renderer entirely. The implementations are unchanged; see
+     * src/host/node/extract.ts.
      */
     private async extractPdfText(file: File): Promise<string> {
-        const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs') as PdfJsLib;
-        const globalScope = globalThis as { pdfjsWorker?: PdfJsWorkerModule };
-        if (!globalScope.pdfjsWorker) {
-            globalScope.pdfjsWorker = require('pdfjs-dist/legacy/build/pdf.worker.mjs') as PdfJsWorkerModule;
-        }
-
-        const buffer = await this.readFileAsArrayBuffer(file);
-        const data = new Uint8Array(buffer);
-
-        const extract = async (): Promise<string> => {
-            const doc = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
-            try {
-                const pageTexts: string[] = [];
-                for (let batchStart = 1; batchStart <= doc.numPages; batchStart += GraphApiService.PDF_PAGE_BATCH_SIZE) {
-                    const batchEnd = Math.min(batchStart + GraphApiService.PDF_PAGE_BATCH_SIZE - 1, doc.numPages);
-                    const batchNums = Array.from({ length: batchEnd - batchStart + 1 }, (_, i) => batchStart + i);
-                    const batchTexts = await Promise.all(
-                        batchNums.map(async (pageNum) => {
-                            const page = await doc.getPage(pageNum);
-                            try {
-                                const content = await page.getTextContent();
-                                return GraphApiService.joinPdfTextItems(content.items as PdfTextItem[]);
-                            } finally {
-                                page.cleanup?.();
-                            }
-                        })
-                    );
-                    pageTexts.push(...batchTexts);
-                }
-
-                const text = pageTexts.join('\n\n').trim();
-                if (!text) {
-                    throw new Error('No extractable text found in this PDF. It may be image-based (scanned). Image OCR is not yet supported locally.');
-                }
-                return text;
-            } finally {
-                await doc.destroy();
-            }
-        };
-
-        return new Promise<string>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                reject(new Error(`PDF text extraction timed out after ${GraphApiService.PDF_EXTRACTION_TIMEOUT_MS}ms. The file may be unusually large or complex.`));
-            }, GraphApiService.PDF_EXTRACTION_TIMEOUT_MS);
-            extract().then(
-                (text) => { clearTimeout(timer); resolve(text); },
-                (err) => { clearTimeout(timer); reject(err); },
-            );
-        });
+        return host.extract.pdfText(await this.readFileAsArrayBuffer(file));
     }
 
-    /**
-     * Extract text from DOCX by reading it as a ZIP and parsing word/document.xml.
-     */
     private async extractDocxText(file: File): Promise<string> {
-        const buffer = await this.readFileAsArrayBuffer(file);
-        const bytes = new Uint8Array(buffer);
-
-        const xmlContent = this.extractFileFromZip(bytes, 'word/document.xml');
-        if (!xmlContent) {
-            throw new Error('Could not find word/document.xml inside the DOCX file.');
-        }
-
-        let text = new TextDecoder().decode(xmlContent);
-        text = text.replace(/<w:p[^>]*>/g, '\n');
-        text = text.replace(/<w:tab\/>/g, '\t');
-        text = text.replace(/<w:br\/>/g, '\n');
-        text = text.replace(/<[^>]+>/g, '');
-        text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
-        text = text.replace(/\n{3,}/g, '\n\n');
-
-        return text.trim();
-    }
-
-    /**
-     * Minimal ZIP extraction for a single file entry (no external dependencies).
-     *
-     * Reads the central directory (located via the End Of Central Directory record) rather
-     * than scanning local file headers sequentially from the start of the archive. Many real
-     * DOCX writers (streamed saves, some Word/LibreOffice/Pandoc output) set the ZIP
-     * "data descriptor" bit on compressed entries, which leaves compressed/uncompressed size
-     * as 0 in the *local* header — a sequential scan can't know how far to skip and desyncs
-     * on the first such entry. Central directory entries always carry accurate sizes.
-     */
-    private extractFileFromZip(data: Uint8Array, targetPath: string): Uint8Array | null {
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-
-        const EOCD_SIGNATURE = 0x06054b50; // "PK\x05\x06"
-        const eocdSearchStart = Math.max(0, data.length - 22 - 0xffff); // EOCD comment is at most 65535 bytes
-        let eocdOffset = -1;
-        for (let i = data.length - 22; i >= eocdSearchStart; i--) {
-            if (view.getUint32(i, true) === EOCD_SIGNATURE) {
-                eocdOffset = i;
-                break;
-            }
-        }
-        if (eocdOffset === -1) return null;
-
-        const centralDirEntryCount = view.getUint16(eocdOffset + 10, true);
-        const centralDirOffset = view.getUint32(eocdOffset + 16, true);
-
-        const CENTRAL_DIR_SIGNATURE = 0x02014b50; // "PK\x01\x02"
-        let offset = centralDirOffset;
-        for (let i = 0; i < centralDirEntryCount; i++) {
-            if (offset + 46 > data.length || view.getUint32(offset, true) !== CENTRAL_DIR_SIGNATURE) break;
-
-            const compressionMethod = view.getUint16(offset + 10, true);
-            const compressedSize = view.getUint32(offset + 20, true);
-            const uncompressedSize = view.getUint32(offset + 24, true);
-            const nameLen = view.getUint16(offset + 28, true);
-            const extraLen = view.getUint16(offset + 30, true);
-            const commentLen = view.getUint16(offset + 32, true);
-            const localHeaderOffset = view.getUint32(offset + 42, true);
-            const name = new TextDecoder().decode(data.slice(offset + 46, offset + 46 + nameLen));
-
-            if (name === targetPath) {
-                return this.readZipEntryData(data, view, localHeaderOffset, compressionMethod, compressedSize, uncompressedSize);
-            }
-
-            offset += 46 + nameLen + extraLen + commentLen;
-        }
-        return null;
-    }
-
-    /** Reads and (if needed) inflates a single entry's data given its central-directory metadata. */
-    private readZipEntryData(
-        data: Uint8Array,
-        view: DataView,
-        localHeaderOffset: number,
-        compressionMethod: number,
-        compressedSize: number,
-        uncompressedSize: number,
-    ): Uint8Array | null {
-        const LOCAL_FILE_SIGNATURE = 0x04034b50; // "PK\x03\x04"
-        if (view.getUint32(localHeaderOffset, true) !== LOCAL_FILE_SIGNATURE) return null;
-
-        const nameLen = view.getUint16(localHeaderOffset + 26, true);
-        const extraLen = view.getUint16(localHeaderOffset + 28, true);
-        const dataStart = localHeaderOffset + 30 + nameLen + extraLen;
-
-        if (compressionMethod === 0) {
-            return data.slice(dataStart, dataStart + uncompressedSize);
-        }
-        if (compressionMethod === 8) {
-            try {
-                const compressed = data.slice(dataStart, dataStart + compressedSize);
-                const { inflateRawSync } = require('zlib') as typeof import('zlib');
-                const result = inflateRawSync(Buffer.from(compressed));
-                return new Uint8Array(result);
-            } catch (e) {
-                console.error('[GraphApiService] DOCX decompression failed:', e);
-                return null;
-            }
-        }
-        return null;
+        return host.extract.docxText(await this.readFileAsArrayBuffer(file));
     }
 
     /**
