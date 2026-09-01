@@ -11,10 +11,15 @@ import * as fsp from 'fs/promises';
 import * as nodePath from 'path';
 import { host } from '../../src/host/impl';
 import * as vaultFs from '../../src/host/node/vault';
-import type { ExecOptions, HttpRequest } from '../../src/host/types';
+import type { ExecOptions, HttpRequest, SecretRef } from '../../src/host/types';
 
 export function registerHostHandlers(): void {
-    ipcMain.handle('host:env.get', (_e, name: string) => host.env.get(name));
+    // Deliberately no 'host:secrets.get': there is no channel that returns a secret.
+    ipcMain.handle('host:secrets.has', (_e, ref: SecretRef) => host.secrets.has(ref));
+    ipcMain.handle('host:secrets.setKeychain', (_e, name: string, value: string) =>
+        host.secrets.setKeychain(name, value));
+    ipcMain.handle('host:secrets.deleteKeychain', (_e, name: string) => host.secrets.deleteKeychain(name));
+    ipcMain.handle('host:secrets.listKeychain', () => host.secrets.listKeychain());
 
     ipcMain.handle('host:cli.resolve', (_e, configured: string | undefined, fallback: string, extras?: string[], timeout?: number) =>
         host.cli.resolve(configured, fallback, extras, timeout));

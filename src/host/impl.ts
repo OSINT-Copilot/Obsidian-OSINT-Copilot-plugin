@@ -7,6 +7,8 @@
 import type { ExecOptions, ExecResult, Host, HttpRequest, HttpResponse, PlatformInfo } from './types';
 import { resolveCliPath } from './node/cli';
 import * as vaultFs from './node/vault';
+import * as secretStore from './node/secrets';
+import { assertRequestAllowed } from './node/net-guard';
 
 /**
  * Getters, not a snapshot: the resolve-binary-path suite overrides process.platform
@@ -66,18 +68,41 @@ async function exec(execId: string, binary: string, args: string[], options: Exe
 }
 
 async function request(req: HttpRequest): Promise<HttpResponse> {
-    const response = await fetch(req.url, {
+    const url = new URL(req.url);
+    const headers: Record<string, string> = {
+        ...(req.contentType ? { 'Content-Type': req.contentType } : {}),
+        ...(req.headers ?? {}),
+    };
+
+    // Secrets are resolved and injected HERE, never in the renderer.
+    if (req.auth) {
+        const secret = await secretStore.resolveSecret(req.auth.ref);
+        if (!secret) {
+            throw new Error(
+                `Missing credential (${req.auth.ref.source}: ${req.auth.ref.name})`,
+            );
+        }
+        if (req.auth.placement === 'bearer') {
+            headers.Authorization = `Bearer ${secret}`;
+        } else if (req.auth.placement === 'header') {
+            headers[req.auth.headerName || 'X-API-Key'] = secret;
+        } else {
+            url.searchParams.set(req.auth.queryParam || 'api_key', secret);
+        }
+    }
+
+    // Allowlist + private-address denial, after any auth rewrote the URL.
+    await assertRequestAllowed(url.toString(), req.allowedDomains);
+
+    const response = await fetch(url.toString(), {
         method: req.method ?? 'GET',
-        headers: {
-            ...(req.contentType ? { 'Content-Type': req.contentType } : {}),
-            ...(req.headers ?? {}),
-        },
+        headers,
         body: req.body as BodyInit | undefined,
     });
 
     const arrayBuffer = await response.arrayBuffer();
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => { responseHeaders[key.toLowerCase()] = value; });
 
     if (req.throw !== false && response.status >= 400) {
         throw Object.assign(new Error(`Request failed, status ${response.status}`), { status: response.status });
@@ -85,7 +110,7 @@ async function request(req: HttpRequest): Promise<HttpResponse> {
 
     return {
         status: response.status,
-        headers,
+        headers: responseHeaders,
         arrayBuffer,
         text: new TextDecoder().decode(arrayBuffer),
     };
@@ -93,8 +118,11 @@ async function request(req: HttpRequest): Promise<HttpResponse> {
 
 export const host: Host = {
     platform,
-    env: {
-        async get(name: string) { return process.env[name] ?? null; },
+    secrets: {
+        has: secretStore.hasSecret,
+        setKeychain: secretStore.setKeychain,
+        deleteKeychain: secretStore.deleteKeychain,
+        listKeychain: secretStore.listKeychain,
     },
     cli: {
         resolve: resolveCliPath,

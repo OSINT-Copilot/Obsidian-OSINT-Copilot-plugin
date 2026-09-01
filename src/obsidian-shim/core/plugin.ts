@@ -77,13 +77,35 @@ export abstract class Plugin extends Component {
         this.register(() => { this.settingTab = null; });
     }
 
-    /** Settings live at <vault>/.osint-copilot/data.json, not in a plugin folder. */
+    /**
+     * Settings live at <vault>/.osint-copilot/data.json, not in a plugin folder.
+     *
+     * On first run against a vault that was previously used with the Obsidian plugin,
+     * the old data.json is imported once. That file is left in place: the frozen
+     * plugin may still be installed, and deleting another application's config as a
+     * side effect of first launch would be hostile.
+     */
     async loadData(): Promise<unknown> {
         try {
             return JSON.parse(await this.app.vault.adapter.read(DATA_PATH));
         } catch {
-            return null;
+            return this.importLegacySettings();
         }
+    }
+
+    private async importLegacySettings(): Promise<unknown> {
+        for (const legacyPath of LEGACY_DATA_PATHS) {
+            try {
+                const raw = await this.app.vault.adapter.read(legacyPath);
+                const parsed = JSON.parse(raw);
+                await this.saveData(parsed);
+                console.info(`[osint-copilot] Imported settings from ${legacyPath}`);
+                return parsed;
+            } catch {
+                continue;
+            }
+        }
+        return null;
     }
 
     async saveData(data: unknown): Promise<void> {
@@ -94,3 +116,12 @@ export abstract class Plugin extends Component {
 
 const DATA_DIR = '.osint-copilot';
 const DATA_PATH = `${DATA_DIR}/data.json`;
+
+/**
+ * Where the Obsidian plugin kept its settings. Both folder names are checked because
+ * BRAT installs under the repository name while a manual install uses the plugin id.
+ */
+const LEGACY_DATA_PATHS = [
+    '.obsidian/plugins/osint-copilot/data.json',
+    '.obsidian/plugins/Obsidian-OSINT-Copilot-plugin/data.json',
+];

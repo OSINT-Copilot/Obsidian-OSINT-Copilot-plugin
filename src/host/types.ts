@@ -48,6 +48,25 @@ export interface ExecResult {
     errorMessage?: string;
 }
 
+/**
+ * Where a secret lives. The renderer passes this reference; it never holds the
+ * secret itself. Resolution and injection happen in main.
+ */
+export interface SecretRef {
+    source: 'env' | 'vault-file' | 'keychain';
+    /** Env var name, vault-relative credential path, or keychain key. */
+    name: string;
+}
+
+export interface RequestAuth {
+    placement: 'bearer' | 'header' | 'query';
+    ref: SecretRef;
+    /** For placement 'header'; defaults to X-API-Key. */
+    headerName?: string;
+    /** For placement 'query'; defaults to api_key. */
+    queryParam?: string;
+}
+
 export interface HttpRequest {
     url: string;
     method?: string;
@@ -56,6 +75,20 @@ export interface HttpRequest {
     contentType?: string;
     /** false => non-2xx resolves normally (wayback, enrichers rely on this). */
     throw?: boolean;
+    /**
+     * Resolved and injected in main, so the secret never crosses into the renderer.
+     * This is what closes the "renderer holds enricher credentials" gap.
+     */
+    auth?: RequestAuth;
+    /**
+     * Host allowlist, re-enforced in main.
+     *
+     * The renderer checks this too, but once the renderer is the untrusted side that
+     * check is a convenience, not a boundary -- and enricher URL templates are
+     * LLM- and user-authored. Main additionally refuses private, loopback,
+     * link-local and cloud-metadata addresses after DNS resolution.
+     */
+    allowedDomains?: string[];
 }
 
 export interface HttpResponse {
@@ -121,9 +154,13 @@ export interface Host {
      */
     readonly platform: PlatformInfo;
 
-    env: {
-        /** One key per call -- never the whole environment. */
-        get(name: string): Promise<string | null>;
+    secrets: {
+        /** Whether a credential resolves, WITHOUT returning it. */
+        has(ref: SecretRef): Promise<boolean>;
+        /** Stores a secret in the OS keychain (Electron safeStorage). */
+        setKeychain(name: string, value: string): Promise<void>;
+        deleteKeychain(name: string): Promise<void>;
+        listKeychain(): Promise<string[]>;
     };
 
     cli: {

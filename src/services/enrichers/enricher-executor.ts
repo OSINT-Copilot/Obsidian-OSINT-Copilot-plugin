@@ -3,6 +3,7 @@ import { DEFAULT_CREDENTIALS_FOLDER } from "../../constants/vault-layout";
 import { normalizeCredentialsRelativePath } from "../custom-vault-operations";
 import type { EnricherSpec } from "./enricher-schema";
 import { host } from '../../host';
+import type { RequestAuth, SecretRef } from '../../host/types';
 
 /**
  * Pause between consecutive enricher HTTP calls in unified chat. Some APIs (e.g. LeakCheck)
@@ -89,35 +90,34 @@ function truncate(v: string, max: number): string {
   return v.slice(0, max) + "...";
 }
 
-async function authHeader(
-  spec: EnricherSpec,
-  vault: Vault | undefined,
-  credentialsFolder: string,
-): Promise<Record<string, string>> {
+/**
+ * Translates a spec's auth config into a reference for main to resolve.
+ *
+ * This function deliberately never touches a secret. Resolution and injection happen
+ * in the main process, so enricher credentials never enter the renderer -- which
+ * renders LLM and enricher output and is therefore the untrusted side.
+ */
+function authRequest(spec: EnricherSpec, credentialsFolder: string): RequestAuth | undefined {
   const cfg = spec.auth;
-  if (cfg.type === "none") return {};
-  /** Query-string secrets are applied to the URL in executeEnricherHttp before this runs — never treat as header/env. */
-  if (cfg.type === "query_vault" || cfg.type === "query_env") return {};
-  if (cfg.type === "bearer_vault" || cfg.type === "header_vault") {
-    if (!vault) throw new Error("Vault-backed auth requires Obsidian vault access");
-    const rel = cfg.vaultRelativePath || "";
-    const secret = await readVaultCredential(vault, credentialsFolder, rel);
-    if (!secret) throw new Error(`Empty credential file: ${rel}`);
-    if (cfg.type === "bearer_vault") {
-      return { Authorization: `Bearer ${secret}` };
-    }
-    return { [cfg.headerName || "X-API-Key"]: secret };
+  if (cfg.type === "none") return undefined;
+
+  const isEnv = cfg.type.endsWith("_env");
+  const ref: SecretRef = isEnv
+    ? { source: "env", name: cfg.envVar || "" }
+    : { source: "vault-file", name: joinCredentialPath(credentialsFolder, cfg.vaultRelativePath || "") };
+
+  if (cfg.type === "bearer_env" || cfg.type === "bearer_vault") {
+    return { placement: "bearer", ref };
   }
-  const envVar = cfg.envVar || "";
-  const secret = envVar ? await host.env.get(envVar) : "";
-  if (!secret) throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
-  if (cfg.type === "bearer_env") {
-    return { Authorization: `Bearer ${secret}` };
+  if (cfg.type === "header_env" || cfg.type === "header_vault") {
+    return { placement: "header", ref, headerName: cfg.headerName || "X-API-Key" };
   }
-  if (cfg.type === "header_env") {
-    return { [cfg.headerName || "X-API-Key"]: secret };
-  }
-  return {};
+  return { placement: "query", ref, queryParam: cfg.queryParam || "api_key" };
+}
+
+function joinCredentialPath(folder: string, relative: string): string {
+  const clean = relative.replace(/^[/\\]+/, "");
+  return clean.startsWith(folder) ? clean : `${folder}/${clean}`;
 }
 
 export async function executeEnricherHttp(
@@ -131,23 +131,13 @@ export async function executeEnricherHttp(
   const baseUrl = interpolate(spec.request.urlTemplate, urlTemplateVars(query, attachmentsContext));
   const url = new URL(baseUrl);
   const credRoot = credentialsFolder ?? DEFAULT_CREDENTIALS_FOLDER;
-  if (spec.auth.type === "query_env") {
-    const envVar = spec.auth.envVar || "";
-    const secret = envVar ? await host.env.get(envVar) : "";
-    if (!secret) throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
-    url.searchParams.set(spec.auth.queryParam || "api_key", secret);
-  } else if (spec.auth.type === "query_vault") {
-    if (!vault) throw new Error("Vault-backed query auth requires Obsidian vault access");
-    const rel = spec.auth.vaultRelativePath || "";
-    const secret = await readVaultCredential(vault, credRoot, rel);
-    if (!secret) throw new Error(`Empty credential file: ${rel}`);
-    url.searchParams.set(spec.auth.queryParam || "api_key", secret);
-  }
+  const auth = authRequest(spec, credRoot);
+  // Checked here for a fast, specific error message; main re-checks it as the actual
+  // boundary, and additionally refuses private address space after DNS resolution.
   ensureDomainAllowed(url.toString(), spec.allowedDomains);
   const headers: Record<string, string> = {
     Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
     ...(spec.request.headers || {}),
-    ...(await authHeader(spec, vault, credRoot)),
   };
   const method = spec.request.method || "GET";
   const body =
@@ -183,6 +173,9 @@ export async function executeEnricherHttp(
           body: postBody,
           contentType,
           throw: false,
+          // Reference only -- main resolves and injects the secret.
+          auth,
+          allowedDomains: spec.allowedDomains,
         });
 
       let timeoutId: ReturnType<typeof setTimeout> | undefined;

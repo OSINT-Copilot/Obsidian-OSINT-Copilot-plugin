@@ -6,11 +6,12 @@
  * port goes wrong, and this app spawns local binaries, runs user-authored HTTP
  * enrichers, and renders LLM output as Markdown. Nothing here loosens later.
  */
-import { app, BrowserWindow, Menu, dialog, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol, safeStorage, session, shell } from 'electron';
 import * as path from 'path';
 import { readFileSync, writeFileSync } from 'fs';
 import { readFile, realpath } from 'fs/promises';
 import * as vaultFs from '../src/host/node/vault';
+import { configureKeychain } from '../src/host/node/secrets';
 import { platformSnapshotArg, registerHostHandlers } from './ipc';
 
 const RENDERER_DIR = path.join(__dirname, 'renderer');
@@ -182,6 +183,9 @@ void app.whenReady().then(() => {
 
     // No renderer should ever be granted a device/media permission.
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+
+    // safeStorage is only available after ready; the keychain source is inert until this runs.
+    configureKeychain(safeStorage, app.getPath('userData'));
 
     registerVaultProtocol();
     buildAppMenu();

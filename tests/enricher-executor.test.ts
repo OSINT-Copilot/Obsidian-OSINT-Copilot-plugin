@@ -123,7 +123,7 @@ describe('executeEnricherHttp', () => {
 		);
 	});
 
-	it('query_vault adds API key to URL and does not throw Missing credential env var', async () => {
+	it('query_vault passes a credential REFERENCE, never the secret itself', async () => {
 		vi.mocked(requestUrl).mockResolvedValue({
 			status: 200,
 			text: '{"ok":true}',
@@ -156,10 +156,19 @@ describe('executeEnricherHttp', () => {
 			'OSINTCopilot/custom/credentials',
 		);
 
-		expect(requestUrl).toHaveBeenCalledWith(
-			expect.objectContaining({
-				url: expect.stringContaining('key=mysecretkey'),
-			}),
-		);
+		// The secret is resolved and injected in the main process, so the renderer
+		// only ever passes a reference. Asserting on the reference IS the security
+		// property: if a secret value ever appears here again, this test fails.
+		const call = vi.mocked(requestUrl).mock.calls[0][0] as unknown as Record<string, unknown>;
+		expect(call.auth).toEqual({
+			placement: 'query',
+			queryParam: 'key',
+			ref: {
+				source: 'vault-file',
+				name: 'OSINTCopilot/custom/credentials/leakcheck/api-key.txt',
+			},
+		});
+		expect(call.allowedDomains).toEqual(spec.allowedDomains);
+		expect(JSON.stringify(call)).not.toContain('mysecretkey');
 	});
 });

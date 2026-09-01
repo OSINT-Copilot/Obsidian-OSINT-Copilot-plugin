@@ -27,8 +27,13 @@ if (forcedVault) contextBridge.exposeInMainWorld('__vaultArg', forcedVault);
 
 contextBridge.exposeInMainWorld('host', {
     platform: readPlatform(),
-    env: {
-        get: (name: string) => ipcRenderer.invoke('host:env.get', name),
+    secrets: {
+        // Note there is no `get`. The renderer can ask whether a credential resolves,
+        // and can store one, but there is no IPC channel that returns a secret value.
+        has: (ref: unknown) => ipcRenderer.invoke('host:secrets.has', ref),
+        setKeychain: (name: string, value: string) => ipcRenderer.invoke('host:secrets.setKeychain', name, value),
+        deleteKeychain: (name: string) => ipcRenderer.invoke('host:secrets.deleteKeychain', name),
+        listKeychain: () => ipcRenderer.invoke('host:secrets.listKeychain'),
     },
     cli: {
         resolve: (configured: string | undefined, fallback: string, extras?: string[], timeout?: number) =>

@@ -20,7 +20,12 @@ function bridge(): Host {
 
 export const host: Host = {
     get platform() { return bridge().platform; },
-    env: { get: (name) => bridge().env.get(name) },
+    secrets: {
+        has: (ref) => bridge().secrets.has(ref),
+        setKeychain: (name, value) => bridge().secrets.setKeychain(name, value),
+        deleteKeychain: (name) => bridge().secrets.deleteKeychain(name),
+        listKeychain: () => bridge().secrets.listKeychain(),
+    },
     cli: {
         resolve: (configured, fallback, extras, timeout) => bridge().cli.resolve(configured, fallback, extras, timeout),
         exec: (execId, binary, args, options) => bridge().cli.exec(execId, binary, args, options),

@@ -10,6 +10,7 @@
  * Header keys are lowercased because api-service.ts:210 reads headers['content-type'].
  */
 import { host } from '../../host';
+import type { RequestAuth } from '../../host/types';
 
 export interface RequestUrlParam {
     url: string;
@@ -19,6 +20,10 @@ export interface RequestUrlParam {
     contentType?: string;
     /** false => non-2xx resolves normally. wayback and enrichers depend on this. */
     throw?: boolean;
+    /** Credential reference; main resolves and injects it. Never a secret value. */
+    auth?: RequestAuth;
+    /** Re-enforced in main, where it is an actual boundary. */
+    allowedDomains?: string[];
 }
 
 export interface RequestUrlResponse {
