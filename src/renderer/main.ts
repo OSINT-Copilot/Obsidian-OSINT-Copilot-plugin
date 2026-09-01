@@ -13,6 +13,10 @@ import { host } from '../host';
 import VaultAIPlugin from '../../main';
 import { WorkspaceRenderer } from './shell/workspace-view';
 import { renderRibbon } from './shell/ribbon';
+import { Sidebar } from './shell/sidebar';
+import { LinkIndex } from './shell/link-index';
+import { CommandPalette } from './shell/command-palette';
+import { MarkdownEditor } from './shell/editor';
 
 installDomExtensions();
 
@@ -31,12 +35,13 @@ async function chooseVault(): Promise<string | null> {
     return picked;
 }
 
-function renderChrome(root: HTMLElement): { ribbon: HTMLElement; main: HTMLElement } {
+function renderChrome(root: HTMLElement): { ribbon: HTMLElement; sidebar: HTMLElement; main: HTMLElement } {
     root.empty();
     const shell = root.createDiv({ cls: 'app-shell' });
     const ribbon = shell.createDiv({ cls: 'ribbon' });
+    const sidebar = shell.createDiv();
     const main = shell.createDiv({ cls: 'app-main' });
-    return { ribbon, main };
+    return { ribbon, sidebar, main };
 }
 
 function renderVaultPrompt(root: HTMLElement, onPick: () => void): void {
@@ -63,6 +68,7 @@ async function boot(): Promise<void> {
     // MarkdownView needs vault access without an App reference; the workspace
     // constructs views from a factory that takes only a leaf.
     MarkdownView.vaultProvider = () => app.vault;
+    MarkdownView.editorFactory = (parent, options) => new MarkdownEditor(parent, options);
     app.workspace.registerViewFactory(MARKDOWN_VIEW_TYPE, (leaf) => new MarkdownView(leaf));
 
     const plugin = new VaultAIPlugin(app as never, MANIFEST as never);
@@ -78,9 +84,16 @@ async function boot(): Promise<void> {
     await plugin.onload();
     plugin.load();
 
-    const { ribbon, main } = renderChrome(root);
+    const { ribbon, sidebar, main } = renderChrome(root);
     renderRibbon(plugin as never, ribbon);
     new WorkspaceRenderer(app.workspace, main).render();
+
+    // The workspace replacement: explorer, search and backlinks are what made
+    // Obsidian necessary alongside the plugin.
+    const links = new LinkIndex(app);
+    new Sidebar(app, links, sidebar);
+    new CommandPalette(app, plugin as never);
+    await links.build();
 
     root.setAttribute('data-boot', 'ready');
     root.setAttribute('data-vault', dir);
@@ -90,6 +103,15 @@ async function boot(): Promise<void> {
     /** Test hook: open a registered view type without going through the ribbon. */
     (window as { __openView?: (type: string) => Promise<void> }).__openView = async (type: string) => {
         await app.workspace.getLeaf('tab').setViewState({ type, active: true });
+    };
+    (window as { __openFile?: (path: string) => Promise<void> }).__openFile = async (path: string) => {
+        const file = app.vault.getAbstractFileByPath(path);
+        if (file) await app.workspace.getLeaf('tab').openFile(file as never);
+    };
+    (window as { __selectPane?: (id: string) => void }).__selectPane = (id: string) => {
+        const tabs = document.querySelectorAll('.sidebar-tab');
+        const index = { files: 0, search: 1, backlinks: 2 }[id] ?? 0;
+        (tabs[index] as HTMLElement | undefined)?.click();
     };
 
     window.addEventListener('beforeunload', () => plugin.unload());

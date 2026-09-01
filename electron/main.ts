@@ -122,9 +122,15 @@ function createWindow(): BrowserWindow {
                         app.exit(ok ? 0 : 1);
                     };
                     const openView = process.argv.find((a) => a.startsWith('--open-view='));
-                    const maybeOpen = openView
-                        ? win.webContents.executeJavaScript(
-                            `window.__openView(${JSON.stringify(openView.slice('--open-view='.length))})`)
+                    const openFile = process.argv.find((a) => a.startsWith('--open-file='));
+                    const pane = process.argv.find((a) => a.startsWith('--pane='));
+                    const script = [
+                        openView && `await window.__openView(${JSON.stringify(openView.slice('--open-view='.length))});`,
+                        openFile && `await window.__openFile(${JSON.stringify(openFile.slice('--open-file='.length))});`,
+                        pane && `window.__selectPane(${JSON.stringify(pane.slice('--pane='.length))});`,
+                    ].filter(Boolean).join('\n');
+                    const maybeOpen = script
+                        ? win.webContents.executeJavaScript(`(async () => { ${script} })()`)
                         : Promise.resolve();
 
                     if (shot) {

@@ -15,6 +15,18 @@ import { TFile } from '../vault/tfile';
 import { MarkdownRenderer } from '../ui/markdown-renderer';
 import type { Vault } from '../vault/vault';
 
+/**
+ * Injected by the renderer so the shim does not depend on the shell. Keeps the
+ * CodeMirror bundle out of any build that only needs the shim (the plugin target).
+ */
+export interface EditorFactory {
+    (parent: HTMLElement, options: {
+        initialText: string;
+        onChange(text: string): void;
+        linkTargets(): string[];
+    }): { getValue(): string; flush(): void; destroy(): void; focus(): void };
+}
+
 export type MarkdownViewMode = 'source' | 'preview';
 
 export const MARKDOWN_VIEW_TYPE = 'markdown';
@@ -22,12 +34,13 @@ export const MARKDOWN_VIEW_TYPE = 'markdown';
 export class MarkdownView extends ItemView {
     file: TFile | null = null;
     private mode: MarkdownViewMode = 'source';
-    private editorEl: HTMLTextAreaElement | null = null;
+    private editor: ReturnType<EditorFactory> | null = null;
     private previewEl: HTMLElement | null = null;
-    private saveTimer: number | null = null;
 
     /** Injected by the app so the view can read and write without an App reference. */
     static vaultProvider: (() => Vault | null) | null = null;
+    /** Injected by the renderer; falls back to a plain textarea when absent. */
+    static editorFactory: EditorFactory | null = null;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -75,8 +88,9 @@ export class MarkdownView extends ItemView {
     }
 
     private async render(): Promise<void> {
+        this.editor?.destroy();
+        this.editor = null;
         this.contentEl.empty();
-        this.editorEl = null;
         this.previewEl = null;
 
         const vault = MarkdownView.vaultProvider?.();
@@ -93,24 +107,29 @@ export class MarkdownView extends ItemView {
             return;
         }
 
-        this.editorEl = this.contentEl.createEl('textarea', { cls: 'markdown-source-view' });
-        this.editorEl.value = content;
-        this.editorEl.addEventListener('input', () => this.scheduleSave());
+        const host = this.contentEl.createDiv({ cls: 'markdown-source-view' });
+        if (MarkdownView.editorFactory) {
+            this.editor = MarkdownView.editorFactory(host, {
+                initialText: content,
+                onChange: (text) => { void this.save(text); },
+                linkTargets: () => vault.getMarkdownFiles().map((f) => f.basename),
+            });
+            return;
+        }
+
+        // Fallback for builds without the shell (e.g. tests): a plain textarea.
+        const textarea = host.createEl('textarea', { cls: 'markdown-source-fallback' });
+        textarea.value = content;
+        textarea.addEventListener('change', () => void this.save(textarea.value));
     }
 
-    /** Debounced autosave; Phase 5's editor keeps the same contract. */
-    private scheduleSave(): void {
-        if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
-        this.saveTimer = window.setTimeout(() => void this.flush(), 500);
+    private async save(text: string): Promise<void> {
+        const vault = MarkdownView.vaultProvider?.();
+        if (!this.file || !vault) return;
+        await vault.modify(this.file, text);
     }
 
     private async flush(): Promise<void> {
-        if (this.saveTimer !== null) {
-            window.clearTimeout(this.saveTimer);
-            this.saveTimer = null;
-        }
-        const vault = MarkdownView.vaultProvider?.();
-        if (!this.editorEl || !this.file || !vault) return;
-        await vault.modify(this.file, this.editorEl.value);
+        this.editor?.flush();
     }
 }

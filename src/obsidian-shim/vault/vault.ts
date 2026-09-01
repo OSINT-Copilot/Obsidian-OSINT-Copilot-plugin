@@ -28,6 +28,20 @@ export interface EventRef {
     detach(): void;
 }
 
+/**
+ * Parent of a vault path, or '/' for a top-level entry.
+ *
+ * The naive `path.slice(0, path.lastIndexOf('/'))` is wrong for top-level paths:
+ * lastIndexOf returns -1, so slice(0, -1) chops the final CHARACTER rather than the
+ * final segment. That made ensureFolder recurse one character at a time and create a
+ * phantom folder for every prefix -- "I", "In", "Inv", ... -- which is exactly how it
+ * showed up in the file explorer.
+ */
+function parentPathOf(path: string): string {
+    const at = path.lastIndexOf('/');
+    return at <= 0 ? '/' : path.slice(0, at);
+}
+
 export class Vault {
     private index = new Map<string, TAbstractFile>();
     private handlers = new Map<VaultEventName, Set<Handler>>();
@@ -262,7 +276,7 @@ export class Vault {
             return existing;
         }
 
-        const parent = this.ensureFolder(path.slice(0, path.lastIndexOf('/')));
+        const parent = this.ensureFolder(parentPathOf(path));
         const node = stat.type === 'folder'
             ? makeFolder(path, parent)
             : makeFile(path, parent, { ctime: stat.ctime, mtime: stat.mtime, size: stat.size });
@@ -277,7 +291,7 @@ export class Vault {
         if (existing instanceof TFolder) return existing;
         if (target === '/') return this.root;
 
-        const parent = this.ensureFolder(target.slice(0, target.lastIndexOf('/')));
+        const parent = this.ensureFolder(parentPathOf(target));
         const folder = makeFolder(target, parent);
         this.index.set(target, folder);
         parent.children.push(folder);
@@ -309,7 +323,7 @@ export class Vault {
             file.basename = dot > 0 ? file.name.slice(0, dot) : file.name;
             file.extension = dot > 0 ? file.name.slice(dot + 1) : '';
         }
-        const parent = this.ensureFolder(newPath.slice(0, newPath.lastIndexOf('/')));
+        const parent = this.ensureFolder(parentPathOf(newPath));
         file.parent = parent;
         parent.children.push(file);
         this.index.set(newPath, file);

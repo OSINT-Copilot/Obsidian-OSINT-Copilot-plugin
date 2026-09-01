@@ -69,3 +69,101 @@ body {
 }
 .vault-prompt h1 { margin: 0; font-size: 24px; }
 .vault-prompt p { margin: 0; color: var(--text-muted); max-width: 46ch; }
+
+/* --- Sidebar: files, search, backlinks --- */
+.sidebar {
+    flex: 0 0 260px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--background-secondary);
+    border-right: 1px solid var(--background-modifier-border);
+}
+.sidebar-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 2px;
+    padding: 6px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.sidebar-tab {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    border-radius: var(--radius-s);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.sidebar-tab:hover { background: var(--background-modifier-hover); }
+.sidebar-tab.is-active { background: var(--background-modifier-hover); color: var(--text-normal); }
+.sidebar-tab svg { width: 16px; height: 16px; }
+.sidebar-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+.explorer-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; color: var(--text-muted); font-size: var(--font-ui-smaller);
+}
+.explorer-action svg { width: 14px; height: 14px; }
+.explorer-row {
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px 8px; font-size: var(--font-ui-small);
+    color: var(--text-muted); cursor: pointer; white-space: nowrap;
+}
+.explorer-row:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.explorer-folder { color: var(--text-normal); }
+.explorer-chevron { display: inline-flex; }
+.explorer-chevron svg { width: 12px; height: 12px; }
+.explorer-name { overflow: hidden; text-overflow: ellipsis; }
+
+.search-pane, .backlinks-pane { padding: 8px; }
+.search-input {
+    width: 100%; box-sizing: border-box;
+    background: var(--background-primary); color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s); padding: 6px 8px; font-size: var(--font-ui-small);
+}
+.search-count, .search-hint, .backlinks-section {
+    color: var(--text-muted); font-size: var(--font-ui-smaller); padding: 8px 2px 4px;
+}
+.backlinks-section { border-top: 1px solid var(--background-modifier-border); margin-top: 8px; }
+.backlinks-title { font-size: 14px; color: var(--text-normal); padding: 2px; }
+.search-hit, .backlink-row {
+    padding: 6px; border-radius: var(--radius-s); cursor: pointer; font-size: var(--font-ui-small);
+}
+.search-hit:hover, .backlink-row:hover { background: var(--background-modifier-hover); }
+.search-hit-title { color: var(--text-normal); }
+.search-hit-path, .search-hit-snippet {
+    color: var(--text-muted); font-size: var(--font-ui-smaller);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.backlink-row { color: var(--text-muted); }
+.backlink-row.is-unresolved { color: var(--text-error); cursor: default; }
+
+/* --- Command palette --- */
+.palette-overlay {
+    position: fixed; inset: 0; z-index: 1800;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex; justify-content: center; align-items: flex-start; padding-top: 14vh;
+}
+.palette {
+    width: min(90vw, 620px);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+.palette-input {
+    width: 100%; box-sizing: border-box; border: none; outline: none;
+    background: transparent; color: var(--text-normal);
+    padding: 14px 16px; font-size: 15px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.palette-list { max-height: 46vh; overflow: auto; padding: 6px; }
+.palette-item {
+    display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+    padding: 8px 10px; border-radius: var(--radius-s); cursor: pointer;
+    font-size: var(--font-ui-small); color: var(--text-normal);
+}
+.palette-item.is-selected, .palette-item:hover { background: var(--background-modifier-hover); }
+.palette-item-sub { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.palette-empty { padding: 14px; color: var(--text-muted); font-size: var(--font-ui-small); }
