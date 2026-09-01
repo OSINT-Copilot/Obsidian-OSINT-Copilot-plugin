@@ -81,9 +81,6 @@ export type UrlExtractResult =
 // Local interface to avoid circular dependency with main.ts
 export interface ApiSettings {
     apiProvider: 'claude-code' | 'codex';
-    customApiUrl: string;
-    customApiKey: string;
-    customModel: string;
     claudeCodeCliPath?: string;
     claudeCodeModel?: string;
 }
@@ -528,23 +525,6 @@ export class GraphApiService {
             }
         }
         return null;
-    }
-
-    /**
-     * Chat via the selected local AI CLI. Replaces remote custom provider and backend calls.
-     */
-    async chatWithCustomProvider(
-        text: string,
-        systemPrompt?: string,
-        settings?: { customApiUrl: string, customApiKey: string, customModel: string, type?: 'openai' | 'mindsdb' },
-        signal?: AbortSignal
-    ): Promise<string> {
-        const service = this.getLocalCliService();
-        if (!service) {
-            throw new Error('Local AI CLI service not initialized.');
-        }
-        const sys = systemPrompt || 'You are a helpful OSINT assistant. Answer the user\'s questions to the best of your ability.';
-        return service.chat(sys, text, signal);
     }
 
     /**

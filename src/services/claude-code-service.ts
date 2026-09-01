@@ -5,7 +5,6 @@ import { resolveCliPath, buildCliNotFoundMessage, platformExecutableCandidates }
 export interface ClaudeCodeConfig {
     cliPath: string;
     model: string;
-    maxTokens: number;
     timeoutMs: number;
     /**
      * When set (e.g. Obsidian vault root from `adapter.getBasePath()`), passed as `cwd` to the CLI process
@@ -75,7 +74,6 @@ export interface ExtractionLogOptions {
 const DEFAULT_CONFIG: ClaudeCodeConfig = {
     cliPath: 'claude',
     model: 'sonnet',
-    maxTokens: 16000,
     timeoutMs: 300_000,
 };
 

@@ -24,7 +24,6 @@ describe('ChatView', () => {
         plugin.settings = {
             systemPrompt: 'Test Prompt',
             maxNotes: 5,
-            entityBasePath: 'Test',
             enableGraphFeatures: true,
             autoRefreshGraph: true,
             autoOpenGraphOnEntityCreation: true,
@@ -57,9 +56,6 @@ describe('ChatView', () => {
             customAgentRuntimes: [],
             extractionLogVerbosity: 'detailed',
             extractionDebugRawCli: false,
-            themeMode: 'system',
-            customCheckpoints: [],
-            advancedGraphMode: true,
             lockedVaultPaths: [],
             activeGraphId: 'default',
             graphWorkspaces: [{ id: 'default', name: 'Default' }],

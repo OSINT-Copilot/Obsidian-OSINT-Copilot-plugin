@@ -10,7 +10,7 @@ import type { WaybackArchiveService } from './wayback-archive-service';
 import {
     Entity, EntityType, Connection, ENTITY_CONFIGS,
     getEntityLabel, generateId, sanitizeFilename, COMMON_PROPERTIES,
-    getFTMEntityConfig, isFTMSchema,
+    getFTMEntityConfig, isFTMSchema, legacyToFTMSchema,
     type OsintConfidence, type OsintContradiction, type OsintSource, type OsintSourceInput,
 } from '../entities/types';
 import {
@@ -111,17 +111,30 @@ export class EntityManager {
         this.schemaCatalog = catalog;
     }
 
-    /** Reload entities and connections from the vault (e.g. after base path change). */
-    async reloadFromVault(): Promise<void> {
-        await this.loadEntitiesFromNotes();
-    }
-
     setVaultLockService(service: VaultLockService | null): void {
         this.vaultLockService = service;
     }
 
     setWaybackArchiveService(service: WaybackArchiveService | null): void {
         this.waybackArchiveService = service;
+    }
+
+    /**
+     * Computes an entity's label consistently for both createEntity() and updateEntity(), so the
+     * derived filename (see saveFTMEntityAsNote) doesn't shift on the first edit. When an FTM
+     * schema is set, ftmSchemaService.getEntityLabel() is tried first; its own last-resort
+     * fallback is to return the bare schema name when none of its label-field/fallback candidates
+     * match a property that's actually present (e.g. legacy Phone's "number" or Text's "text"
+     * aren't in its generic fallback list) -- treat that literal "no real label found" signal as a
+     * reason to fall back to the legacy, type-specific labelField instead, rather than showing the
+     * user a label like "LegalEntity" or "Document".
+     */
+    private computeEntityLabel(type: EntityType | string, ftmSchema: string | undefined, properties: Record<string, unknown>): string {
+        if (ftmSchema) {
+            const ftmLabel = ftmSchemaService.getEntityLabel(ftmSchema, properties);
+            if (ftmLabel && ftmLabel !== ftmSchema) return ftmLabel;
+        }
+        return getEntityLabel(type, properties);
     }
 
     private scheduleWaybackForNote(filePath: string): void {
@@ -656,7 +669,17 @@ export class EntityManager {
             properties = await this.geocodeLocationIfNeeded(properties);
         }
 
-        const label = options?.manualLabel || getEntityLabel(type, properties);
+        // Map the legacy type onto its FTM schema equivalent (when one exists) so that
+        // entities created via the legacy path (e.g. Map View's "Add location") are later
+        // recognized by FTM-aware UI such as FTMEntityEditModal instead of falling back to
+        // a generic property editor.
+        const mappedFtmSchema = legacyToFTMSchema(type);
+
+        // Compute the label the same way updateEntity() will recompute it later -- see
+        // computeEntityLabel()'s own doc comment for why this must be shared rather than each
+        // call site picking a property independently (keeps the derived filename, see
+        // saveFTMEntityAsNote, stable across the first edit instead of shifting underneath it).
+        const label = options?.manualLabel || this.computeEntityLabel(type, mappedFtmSchema, properties);
 
         const entity: Entity = {
             id,
@@ -665,10 +688,20 @@ export class EntityManager {
             properties,
         };
 
+        if (mappedFtmSchema) {
+            entity.ftmSchema = mappedFtmSchema;
+        }
+
         this.mergeOsintOntoEntity(entity, options);
 
-        // Create the note
-        const filePath = await this.saveEntityAsNote(entity);
+        // Save through the same path updateEntity() will use later (it branches on
+        // entity.ftmSchema too, via saveFTMEntityAsNote's own label-only filename and
+        // resolveEntityStorageFolder). Saving unconditionally via saveEntityAsNote here would
+        // give the entity an ID-suffixed filename in a different folder than a later edit would
+        // compute, so update would create a second, duplicate note instead of modifying this one.
+        const filePath = entity.ftmSchema
+            ? await this.saveFTMEntityAsNote(entity, entity.ftmSchema)
+            : await this.saveEntityAsNote(entity);
         entity.filePath = filePath;
 
         this.entities.set(id, entity);
@@ -1096,87 +1129,6 @@ ${(entity.properties.notes as string) || ''}
     }
 
     /**
-     * Retry geocoding for a Location entity that doesn't have coordinates.
-     * Updates the entity and its note file with the new coordinates.
-     */
-    async retryGeocoding(entityId: string): Promise<boolean> {
-        const entity = this.entities.get(entityId);
-        if (!entity) {
-            console.warn('[EntityManager] Entity not found for geocoding retry:', entityId);
-            return false;
-        }
-
-        if (entity.type !== EntityType.Location) {
-            console.warn('[EntityManager] Cannot geocode non-Location entity:', entity.type);
-            return false;
-        }
-
-        // Check if already has coordinates
-        const hasCoords = entity.properties.latitude && entity.properties.longitude;
-        if (hasCoords) {
-            console.debug('[EntityManager] Entity already has coordinates');
-            new Notice('📍 location already has coordinates.');
-            return true;
-        }
-
-        try {
-            const updatedProperties = await this.geocodeLocationIfNeeded(entity.properties);
-
-            // Check if geocoding was successful
-            if (updatedProperties.latitude && updatedProperties.longitude) {
-                // Update the entity
-                entity.properties = updatedProperties;
-                await this.saveEntityAsNote(entity);
-                console.debug('[EntityManager] Geocoding retry successful for:', entity.label);
-                return true;
-            } else {
-                console.debug('[EntityManager] Geocoding retry did not find coordinates');
-                return false;
-            }
-        } catch (error) {
-            console.error('[EntityManager] Geocoding retry failed:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Get all Location entities that don't have coordinates.
-     */
-    getUnlocatedEntities(): Entity[] {
-        return Array.from(this.entities.values()).filter(entity => {
-            if (entity.type !== EntityType.Location) return false;
-            const hasLat = entity.properties.latitude !== undefined && entity.properties.latitude !== null && entity.properties.latitude !== '';
-            const hasLng = entity.properties.longitude !== undefined && entity.properties.longitude !== null && entity.properties.longitude !== '';
-            return !hasLat || !hasLng;
-        });
-    }
-
-    /**
-     * Retry geocoding for all unlocated entities.
-     * Returns the number of successfully geocoded entities.
-     */
-    async geocodeAllUnlocated(): Promise<{ success: number; failed: number }> {
-        const unlocated = this.getUnlocatedEntities();
-        let success = 0;
-        let failed = 0;
-
-        new Notice(`🌍 Geocoding ${unlocated.length} locations...`);
-
-        for (const entity of unlocated) {
-            const result = await this.retryGeocoding(entity.id);
-            if (result) {
-                success++;
-            } else {
-                failed++;
-            }
-            // Rate limiting is handled by the geocoding service
-        }
-
-        new Notice(`📍 Geocoding complete: ${success} succeeded, ${failed} failed`);
-        return { success, failed };
-    }
-
-    /**
      * Save an entity as an Obsidian note.
      */
     private async saveEntityAsNote(entity: Entity): Promise<string> {
@@ -1363,9 +1315,11 @@ ${(entity.properties.notes as string) || ''}
         // Update properties
         entity.properties = { ...entity.properties, ...properties };
 
-        // Update label based on entity type
+        // Update label based on entity type -- computeEntityLabel() must match createEntity()'s
+        // computation exactly (same function, same fallback behavior) or the derived filename
+        // (saveFTMEntityAsNote) shifts on this very save.
         if (entity.ftmSchema) {
-            entity.label = ftmSchemaService.getEntityLabel(entity.ftmSchema, entity.properties);
+            entity.label = this.computeEntityLabel(entity.type, entity.ftmSchema, entity.properties);
         } else if (entity.schemaFamily && entity.schemaFamily !== 'ftm') {
             entity.label = this.schemaCatalog?.getInstanceLabel(entity) ?? entity.label;
         } else {

@@ -22,11 +22,9 @@ import {
 export interface VaultAISettings {
 	systemPrompt: string;
 	maxNotes: number;
-	entityBasePath: string;
 	enableGraphFeatures: boolean;
 	autoRefreshGraph: boolean;
 	autoOpenGraphOnEntityCreation: boolean;
-	advancedGraphMode: boolean;
 	conversationFolder: string;
 	promptsFolder: string;
 	activeAgentId: string;
@@ -56,8 +54,6 @@ export interface VaultAISettings {
 	customAgentRuntimes: CustomAgentRuntime[];
 	extractionLogVerbosity: "minimal" | "detailed";
 	extractionDebugRawCli: boolean;
-	customCheckpoints: CustomCheckpoint[];
-	themeMode: "system" | "light" | "dark";
 	lockedVaultPaths: string[];
 	activeGraphId: string;
 	graphWorkspaces: { id: string; name: string }[];
@@ -67,24 +63,13 @@ export interface VaultAISettings {
 	miroLastBoardInput: string;
 }
 
-export interface CustomCheckpoint {
-	id: string;
-	name: string;
-	url: string;
-	apiKey: string;
-	model: string;
-	type?: "openai" | "mindsdb";
-}
-
 export const DEFAULT_SETTINGS: VaultAISettings = {
 	systemPrompt:
 		"You are a vault assistant. Answer questions clearly and concisely based on the provided notes. Cite note paths in-line where useful.",
 	maxNotes: 15,
-	entityBasePath: "OSINTCopilot",
 	enableGraphFeatures: true,
 	autoRefreshGraph: true,
 	autoOpenGraphOnEntityCreation: false,
-	advancedGraphMode: true,
 	conversationFolder: DEFAULT_CONVERSATION_FOLDER,
 	promptsFolder: DEFAULT_PROMPTS_FOLDER,
 	activeAgentId: "default",
@@ -114,9 +99,6 @@ export const DEFAULT_SETTINGS: VaultAISettings = {
 	customAgentRuntimes: [],
 	extractionLogVerbosity: "detailed",
 	extractionDebugRawCli: false,
-	customCheckpoints: [],
-
-	themeMode: "system",
 
 	lockedVaultPaths: [],
 	activeGraphId: "default",

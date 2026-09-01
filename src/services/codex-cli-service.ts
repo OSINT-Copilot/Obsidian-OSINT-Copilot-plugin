@@ -112,7 +112,6 @@ export class CodexCliService extends ClaudeCodeService {
         super(pluginDir, {
             cliPath: 'codex',
             model: '',
-            maxTokens: 16_000,
             timeoutMs: 300_000,
             ...config,
         });

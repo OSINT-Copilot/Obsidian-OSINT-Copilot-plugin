@@ -24,7 +24,6 @@ describe('CodexCliService', () => {
         expect(service.configSnapshot()).toMatchObject({
             cliPath: 'codex',
             model: '',
-            maxTokens: 16_000,
             timeoutMs: 300_000,
         });
         expect(service.args()).toEqual([

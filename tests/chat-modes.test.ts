@@ -52,11 +52,9 @@ describe('ChatView send routing', () => {
     plugin.settings = {
       systemPrompt: 'You are a vault assistant.',
       maxNotes: 15,
-      entityBasePath: 'OSINTCopilot',
       enableGraphFeatures: true,
       autoRefreshGraph: true,
       autoOpenGraphOnEntityCreation: false,
-      advancedGraphMode: true,
       conversationFolder: DEFAULT_CONVERSATION_FOLDER,
       promptsFolder: DEFAULT_PROMPTS_FOLDER,
       activeAgentId: 'default',
@@ -86,8 +84,6 @@ describe('ChatView send routing', () => {
       customAgentRuntimes: [],
       extractionLogVerbosity: 'detailed',
       extractionDebugRawCli: false,
-      themeMode: 'system',
-      customCheckpoints: [],
       lockedVaultPaths: [],
       activeGraphId: 'default',
       graphWorkspaces: [{ id: 'default', name: 'Default' }],
@@ -121,7 +117,6 @@ describe('ChatView send routing', () => {
       extractTextFromFile: vi.fn(),
       extractTextFromImage: vi.fn(),
       processTextInChunks: vi.fn().mockResolvedValue({ success: true, operations: [] }),
-      chatWithCustomProvider: vi.fn().mockResolvedValue('Default Response'),
     } as any;
 
     plugin.orchestrationService = {

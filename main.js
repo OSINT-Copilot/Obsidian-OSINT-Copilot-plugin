@@ -91707,6 +91707,25 @@ function validateEntityName(name, entityType) {
     isValid: true
   };
 }
+var LEGACY_TO_FTM_MAP = {
+  ["Person" /* Person */]: "Person",
+  ["Event" /* Event */]: "Event",
+  ["Location" /* Location */]: "Address",
+  ["Company" /* Company */]: "Company",
+  ["Email" /* Email */]: "LegalEntity",
+  // Email is a property in FTM
+  ["Phone" /* Phone */]: "LegalEntity",
+  // Phone is a property in FTM
+  ["Username" /* Username */]: "UserAccount",
+  ["Vehicle" /* Vehicle */]: "Vehicle",
+  ["Website" /* Website */]: "Document",
+  ["Evidence" /* Evidence */]: "Document",
+  ["Image" /* Image */]: "Document",
+  ["Text" /* Text */]: "Document"
+};
+function legacyToFTMSchema(type) {
+  return LEGACY_TO_FTM_MAP[type] || "Thing";
+}
 function generateId() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -98610,15 +98629,29 @@ var EntityManager = class {
   setSchemaCatalogService(catalog) {
     this.schemaCatalog = catalog;
   }
-  /** Reload entities and connections from the vault (e.g. after base path change). */
-  async reloadFromVault() {
-    await this.loadEntitiesFromNotes();
-  }
   setVaultLockService(service) {
     this.vaultLockService = service;
   }
   setWaybackArchiveService(service) {
     this.waybackArchiveService = service;
+  }
+  /**
+   * Computes an entity's label consistently for both createEntity() and updateEntity(), so the
+   * derived filename (see saveFTMEntityAsNote) doesn't shift on the first edit. When an FTM
+   * schema is set, ftmSchemaService.getEntityLabel() is tried first; its own last-resort
+   * fallback is to return the bare schema name when none of its label-field/fallback candidates
+   * match a property that's actually present (e.g. legacy Phone's "number" or Text's "text"
+   * aren't in its generic fallback list) -- treat that literal "no real label found" signal as a
+   * reason to fall back to the legacy, type-specific labelField instead, rather than showing the
+   * user a label like "LegalEntity" or "Document".
+   */
+  computeEntityLabel(type, ftmSchema, properties) {
+    if (ftmSchema) {
+      const ftmLabel = ftmSchemaService.getEntityLabel(ftmSchema, properties);
+      if (ftmLabel && ftmLabel !== ftmSchema)
+        return ftmLabel;
+    }
+    return getEntityLabel(type, properties);
   }
   scheduleWaybackForNote(filePath) {
     try {
@@ -99061,15 +99094,19 @@ var EntityManager = class {
     if (type === "Location" /* Location */ && !options?.skipAutoGeocode) {
       properties = await this.geocodeLocationIfNeeded(properties);
     }
-    const label = options?.manualLabel || getEntityLabel(type, properties);
+    const mappedFtmSchema = legacyToFTMSchema(type);
+    const label = options?.manualLabel || this.computeEntityLabel(type, mappedFtmSchema, properties);
     const entity = {
       id,
       type,
       label,
       properties
     };
+    if (mappedFtmSchema) {
+      entity.ftmSchema = mappedFtmSchema;
+    }
     this.mergeOsintOntoEntity(entity, options);
-    const filePath = await this.saveEntityAsNote(entity);
+    const filePath = entity.ftmSchema ? await this.saveFTMEntityAsNote(entity, entity.ftmSchema) : await this.saveEntityAsNote(entity);
     entity.filePath = filePath;
     this.entities.set(id, entity);
     return entity;
@@ -99413,74 +99450,6 @@ ${entity.properties.notes || ""}
     }
   }
   /**
-   * Retry geocoding for a Location entity that doesn't have coordinates.
-   * Updates the entity and its note file with the new coordinates.
-   */
-  async retryGeocoding(entityId) {
-    const entity = this.entities.get(entityId);
-    if (!entity) {
-      console.warn("[EntityManager] Entity not found for geocoding retry:", entityId);
-      return false;
-    }
-    if (entity.type !== "Location" /* Location */) {
-      console.warn("[EntityManager] Cannot geocode non-Location entity:", entity.type);
-      return false;
-    }
-    const hasCoords = entity.properties.latitude && entity.properties.longitude;
-    if (hasCoords) {
-      console.debug("[EntityManager] Entity already has coordinates");
-      new import_obsidian2.Notice("\u{1F4CD} location already has coordinates.");
-      return true;
-    }
-    try {
-      const updatedProperties = await this.geocodeLocationIfNeeded(entity.properties);
-      if (updatedProperties.latitude && updatedProperties.longitude) {
-        entity.properties = updatedProperties;
-        await this.saveEntityAsNote(entity);
-        console.debug("[EntityManager] Geocoding retry successful for:", entity.label);
-        return true;
-      } else {
-        console.debug("[EntityManager] Geocoding retry did not find coordinates");
-        return false;
-      }
-    } catch (error) {
-      console.error("[EntityManager] Geocoding retry failed:", error);
-      return false;
-    }
-  }
-  /**
-   * Get all Location entities that don't have coordinates.
-   */
-  getUnlocatedEntities() {
-    return Array.from(this.entities.values()).filter((entity) => {
-      if (entity.type !== "Location" /* Location */)
-        return false;
-      const hasLat = entity.properties.latitude !== void 0 && entity.properties.latitude !== null && entity.properties.latitude !== "";
-      const hasLng = entity.properties.longitude !== void 0 && entity.properties.longitude !== null && entity.properties.longitude !== "";
-      return !hasLat || !hasLng;
-    });
-  }
-  /**
-   * Retry geocoding for all unlocated entities.
-   * Returns the number of successfully geocoded entities.
-   */
-  async geocodeAllUnlocated() {
-    const unlocated = this.getUnlocatedEntities();
-    let success = 0;
-    let failed = 0;
-    new import_obsidian2.Notice(`\u{1F30D} Geocoding ${unlocated.length} locations...`);
-    for (const entity of unlocated) {
-      const result = await this.retryGeocoding(entity.id);
-      if (result) {
-        success++;
-      } else {
-        failed++;
-      }
-    }
-    new import_obsidian2.Notice(`\u{1F4CD} Geocoding complete: ${success} succeeded, ${failed} failed`);
-    return { success, failed };
-  }
-  /**
    * Save an entity as an Obsidian note.
    */
   async saveEntityAsNote(entity) {
@@ -99645,7 +99614,7 @@ ${nextFm}
       return null;
     entity.properties = { ...entity.properties, ...properties };
     if (entity.ftmSchema) {
-      entity.label = ftmSchemaService.getEntityLabel(entity.ftmSchema, entity.properties);
+      entity.label = this.computeEntityLabel(entity.type, entity.ftmSchema, entity.properties);
     } else if (entity.schemaFamily && entity.schemaFamily !== "ftm") {
       entity.label = this.schemaCatalog?.getInstanceLabel(entity) ?? entity.label;
     } else {
@@ -100996,17 +100965,6 @@ Tip: paste the text content directly into the chat instead.`
     return null;
   }
   /**
-   * Chat via the selected local AI CLI. Replaces remote custom provider and backend calls.
-   */
-  async chatWithCustomProvider(text, systemPrompt, settings, signal) {
-    const service = this.getLocalCliService();
-    if (!service) {
-      throw new Error("Local AI CLI service not initialized.");
-    }
-    const sys = systemPrompt || "You are a helpful OSINT assistant. Answer the user's questions to the best of your ability.";
-    return service.chat(sys, text, signal);
-  }
-  /**
    * General-purpose model call via the selected local AI CLI.
    */
   async callRemoteModel(messages, jsonResponse = false, customModel, signal, orchestrationOptions, logOptions) {
@@ -101384,7 +101342,6 @@ function buildCliNotFoundMessage(displayName, triedPath, configuredValue, settin
 var DEFAULT_CONFIG = {
   cliPath: "claude",
   model: "sonnet",
-  maxTokens: 16e3,
   timeoutMs: 3e5
 };
 var DEFAULT_CHAT_MAX_TURNS = 16;
@@ -101881,7 +101838,6 @@ var CodexCliService = class extends ClaudeCodeService {
     super(pluginDir, {
       cliPath: "codex",
       model: "",
-      maxTokens: 16e3,
       timeoutMs: 3e5,
       ...config
     });
@@ -102685,26 +102641,6 @@ function familySectionTitle(family) {
       return family;
   }
 }
-var COMMON_RELATIONSHIPS = [
-  "WORKS_AT",
-  "ATTENDED",
-  "LOCATED_AT",
-  "KNOWS",
-  "OWNS",
-  "MEMBER_OF",
-  "RELATED_TO",
-  "CONTACTED",
-  "VISITED",
-  "EMPLOYED_BY",
-  "LIVES_AT",
-  "ASSOCIATED_WITH",
-  "PARENT_OF",
-  "CHILD_OF",
-  "SIBLING_OF",
-  "SPOUSE_OF",
-  "FRIEND_OF",
-  "COLLEAGUE_OF"
-];
 var EntityCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, entityType, onEntityCreated, initialProperties = {}, entityId) {
     super(app);
@@ -103253,160 +103189,18 @@ var EntityCreationModal = class extends import_obsidian8.Modal {
     contentEl.empty();
   }
 };
-var ConnectionCreationModal = class extends import_obsidian8.Modal {
-  constructor(app, entityManager, onConnectionCreated, preselectedSourceId, preselectedTargetId) {
-    super(app);
-    this.sourceEntityId = null;
-    this.targetEntityId = null;
-    this.relationship = "";
-    this.entities = [];
-    this.entityManager = entityManager;
-    this.onConnectionCreated = onConnectionCreated || null;
-    this.sourceEntityId = preselectedSourceId || null;
-    this.targetEntityId = preselectedTargetId || null;
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("graph_copilot-connection-modal");
-    this.entities = this.entityManager.getAllEntities();
-    contentEl.createEl("h2", { text: "Create connection" });
-    contentEl.createEl("p", {
-      text: "Create a relationship between two entities",
-      cls: "graph_copilot-entity-modal-description"
-    });
-    if (this.entities.length < 2) {
-      contentEl.createEl("p", {
-        text: "You need at least 2 entities to create a connection.",
-        cls: "graph_copilot-connection-warning"
-      });
-      const closeBtn = contentEl.createEl("button", { text: "Close" });
-      closeBtn.onclick = () => this.close();
-      return;
-    }
-    const formContainer = contentEl.createDiv({ cls: "graph_copilot-entity-form" });
-    this.createEntityDropdown(formContainer, "Source Entity", "source");
-    const arrowContainer = formContainer.createDiv({ cls: "graph_copilot-connection-arrow" });
-    arrowContainer.textContent = "\u2193";
-    this.createEntityDropdown(formContainer, "Target Entity", "target");
-    this.createRelationshipInput(formContainer);
-    const buttonContainer = contentEl.createDiv({ cls: "graph_copilot-entity-modal-buttons" });
-    const createBtn = buttonContainer.createEl("button", {
-      text: "Create connection",
-      cls: "mod-cta"
-    });
-    createBtn.onclick = () => this.handleCreate();
-    const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
-    cancelBtn.onclick = () => this.close();
-  }
-  createEntityDropdown(container, label, type) {
-    const fieldContainer = container.createDiv({ cls: "graph_copilot-entity-field" });
-    fieldContainer.createEl("label", { text: label + " *" });
-    const select = fieldContainer.createEl("select", { cls: "graph_copilot-entity-input" });
-    const placeholderOption = select.createEl("option", {
-      text: `Select ${label.toLowerCase()}...`,
-      value: ""
-    });
-    placeholderOption.disabled = true;
-    const preselectedId = type === "source" ? this.sourceEntityId : this.targetEntityId;
-    placeholderOption.selected = !preselectedId;
-    for (const entity of this.entities) {
-      const option = select.createEl("option", {
-        text: `${entity.label} (${entity.type})`,
-        value: entity.id
-      });
-      if (preselectedId && entity.id === preselectedId) {
-        option.selected = true;
-      }
-    }
-    select.onchange = () => {
-      if (type === "source") {
-        this.sourceEntityId = select.value || null;
-      } else {
-        this.targetEntityId = select.value || null;
-      }
-    };
-  }
-  createRelationshipInput(container) {
-    const fieldContainer = container.createDiv({ cls: "graph_copilot-entity-field" });
-    fieldContainer.createEl("label", { text: "Relationship type *" });
-    const input = fieldContainer.createEl("input", {
-      type: "text",
-      placeholder: "e.g., WORKS_AT, KNOWS, LOCATED_AT...",
-      cls: "graph_copilot-entity-input"
-    });
-    input.oninput = () => {
-      this.relationship = input.value.toUpperCase().replace(/\s+/g, "_");
-      input.value = this.relationship;
-    };
-    const suggestionsContainer = fieldContainer.createDiv({ cls: "graph_copilot-relationship-suggestions" });
-    suggestionsContainer.createEl("small", { text: "Suggestions: " });
-    const suggestionsWrap = suggestionsContainer.createSpan();
-    COMMON_RELATIONSHIPS.slice(0, 6).forEach((rel) => {
-      const chip = suggestionsWrap.createEl("span", {
-        text: rel,
-        cls: "graph_copilot-relationship-chip"
-      });
-      chip.onclick = () => {
-        this.relationship = rel;
-        input.value = rel;
-      };
-    });
-  }
-  async handleCreate() {
-    if (!this.sourceEntityId) {
-      new import_obsidian8.Notice("Please select a source entity");
-      return;
-    }
-    if (!this.targetEntityId) {
-      new import_obsidian8.Notice("Please select a target entity");
-      return;
-    }
-    if (this.sourceEntityId === this.targetEntityId) {
-      new import_obsidian8.Notice("Source and target entities must be different");
-      return;
-    }
-    if (!this.relationship.trim()) {
-      new import_obsidian8.Notice("Please enter a relationship type");
-      return;
-    }
-    try {
-      const connection = await this.entityManager.createConnection(
-        this.sourceEntityId,
-        this.targetEntityId,
-        this.relationship
-      );
-      if (connection) {
-        const sourceEntity = this.entityManager.getEntity(this.sourceEntityId);
-        const targetEntity = this.entityManager.getEntity(this.targetEntityId);
-        new import_obsidian8.Notice(`Created: ${sourceEntity?.label} \u2192 ${this.relationship} \u2192 ${targetEntity?.label}`);
-        if (this.onConnectionCreated) {
-          this.onConnectionCreated(connection.id);
-        }
-        this.close();
-      } else {
-        new import_obsidian8.Notice("Failed to create connection");
-      }
-    } catch (error) {
-      new import_obsidian8.Notice(`Failed to create connection: ${error}`);
-      console.error("Connection creation error:", error);
-    }
-  }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
 var FTMEntityCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, schemaName, onEntityCreated, catalogType) {
     super(app);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.properties = {};
     this.optionalSectionExpanded = false;
+    this.geocodeStatusEl = null;
     this.entityManager = entityManager;
     this.schemaName = schemaName;
     this.onEntityCreated = onEntityCreated || null;
     this.catalogType = catalogType;
+    this.geocodingService = new GeocodingService();
   }
   onOpen() {
     const { contentEl } = this;
@@ -103467,6 +103261,9 @@ var FTMEntityCreationModal = class extends import_obsidian8.Modal {
           this.createFTMPropertyField(optionalContent, prop, propDef, false);
         }
       }
+    }
+    if ((this.schemaName === "Location" || this.schemaName === "Address") && (!this.properties.latitude || !this.properties.longitude)) {
+      this.createGeocodingSection(contentEl);
     }
     const buttonContainer = contentEl.createDiv({ cls: "graph_copilot-entity-modal-buttons" });
     const createBtn = buttonContainer.createEl("button", {
@@ -103684,6 +103481,133 @@ var FTMEntityCreationModal = class extends import_obsidian8.Modal {
       new import_obsidian8.Notice(`Failed to create entity: ${error}`);
       console.error("FTM Entity creation error:", error);
     }
+  }
+  createGeocodingSection(contentEl) {
+    const geocodingSection = contentEl.createDiv({ cls: "graph_copilot-geocoding-section" });
+    geocodingSection.style.cssText = `
+            margin-top: 20px;
+            padding: 15px;
+            background: var(--background-secondary);
+            border-radius: 6px;
+            border-left: 3px solid var(--interactive-accent);
+        `;
+    const header = geocodingSection.createEl("h4", { text: "\u{1F4CD} geocoding" });
+    header.style.cssText = "margin-top: 0; margin-bottom: 10px;";
+    const description = geocodingSection.createEl("p", {
+      text: "This entity is missing coordinates. Click the button below to automatically geocode the address.",
+      cls: "text-muted"
+    });
+    description.style.cssText = "font-size: 12px; margin-bottom: 12px;";
+    this.geocodeStatusEl = geocodingSection.createDiv({ cls: "graph_copilot-geocode-status" });
+    this.geocodeStatusEl.style.cssText = "margin-bottom: 10px; font-size: 12px;";
+    const geocodeBtn = geocodingSection.createEl("button", { text: "\u{1F4CD} geolocate address" });
+    geocodeBtn.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            border: 1px solid var(--interactive-accent);
+            background: var(--interactive-accent);
+            color: white;
+            font-weight: 500;
+        `;
+    geocodeBtn.onclick = async () => {
+      await this.handleGeocode(geocodeBtn);
+    };
+  }
+  /**
+   * Handle geocoding for the entity being created.
+   */
+  async handleGeocode(button) {
+    let address;
+    let city;
+    let state;
+    let country;
+    if (this.schemaName === "Location") {
+      address = this.properties.address;
+      city = this.properties.city;
+      country = this.properties.country;
+    } else if (this.schemaName === "Address") {
+      address = this.properties.street || this.properties.full;
+      city = this.properties.city;
+      state = this.properties.state;
+      country = this.properties.country;
+    }
+    if (!address && !city && !country) {
+      this.updateGeocodeStatus("\u26A0\uFE0F No address information found. Please fill in address fields first.", "error");
+      return;
+    }
+    try {
+      button.disabled = true;
+      button.textContent = "Geocoding...";
+      this.updateGeocodeStatus("\u{1F504} Geocoding address...", "info");
+      const result = await this.geocodingService.geocodeAddressWithRetry(
+        address,
+        city,
+        state,
+        country,
+        (attempt, maxAttempts, delaySeconds) => {
+          this.updateGeocodeStatus(
+            `\u26A0\uFE0F Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`,
+            "warning"
+          );
+        }
+      );
+      this.properties.latitude = result.latitude;
+      this.properties.longitude = result.longitude;
+      if (result.city && !city) {
+        this.properties.city = result.city;
+      }
+      if (result.state && !state && this.schemaName === "Address") {
+        this.properties.state = result.state;
+      }
+      if (result.country && !country) {
+        this.properties.country = result.country;
+      }
+      if (result.postalCode && this.schemaName === "Address" && !this.properties.postalCode) {
+        this.properties.postalCode = result.postalCode;
+      }
+      this.updateGeocodeStatus(
+        `\u2713 Geocoded: ${result.displayName} 
+Lat: ${result.latitude.toFixed(6)}, Lng: ${result.longitude.toFixed(6)} 
+Confidence: ${result.confidence} `,
+        "success"
+      );
+      button.disabled = false;
+      button.textContent = "\u2713 geocoded successfully";
+      button.style.background = "var(--text-success)";
+      new import_obsidian8.Notice("Geocoding successful! Don't forget to create the entity.");
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "\u{1F4CD} geolocate address";
+      if (error instanceof GeocodingError) {
+        this.updateGeocodeStatus(`\u2717 ${error.message} `, "error");
+        new import_obsidian8.Notice(`Geocoding failed: ${error.message} `);
+      } else {
+        console.error("[FTMEntityCreationModal] Geocoding error:", error);
+        this.updateGeocodeStatus("\u2717 Failed to geocode address. Please try again.", "error");
+        new import_obsidian8.Notice("Failed to geocode address. Please try again.");
+      }
+    }
+  }
+  /**
+   * Update geocode status message.
+   */
+  updateGeocodeStatus(message, type) {
+    if (!this.geocodeStatusEl)
+      return;
+    this.geocodeStatusEl.textContent = message;
+    let color = "var(--text-muted)";
+    if (type === "success")
+      color = "var(--text-success)";
+    else if (type === "warning")
+      color = "var(--text-warning)";
+    else if (type === "error")
+      color = "var(--text-error)";
+    this.geocodeStatusEl.style.color = color;
+    this.geocodeStatusEl.style.whiteSpace = "pre-line";
   }
   createFileUploadField(container, propertyName, entityType) {
     const wrapper = container.createDiv({ cls: "graph_copilot-file-upload-wrapper" });
@@ -107737,25 +107661,6 @@ var _GraphView = class _GraphView extends import_obsidian13.ItemView {
       modal.open();
       this.exitConnectionMode();
     }
-  }
-  /**
-   * Open the connection creation modal (full form).
-   */
-  openConnectionModal() {
-    const modal = new ConnectionCreationModal(
-      this.app,
-      this.entityManager,
-      (connectionId) => {
-        if (connectionId) {
-          const connection = this.entityManager.getConnection(connectionId);
-          if (connection) {
-            this.historyManager.recordRelationshipCreate(connection);
-            this.addConnectionToGraph(connection);
-          }
-        }
-      }
-    );
-    modal.open();
   }
   /**
    * Open the FTM entity type selector modal.
@@ -112189,7 +112094,7 @@ var HermesAgentProvider = class {
     this.cfg = cfg;
     this.id = "hermes-agent";
   }
-  async runTurn(ctx, signal, onProgress) {
+  async runTurn(ctx, signal, onProgress, logOptions) {
     onProgress?.("Running Hermes agent (JSON turn)...", 40);
     const system = buildUnifiedAgentSystemPrompt("Hermes Agent");
     const user = buildUnifiedAgentUserPrompt(ctx);
@@ -112199,18 +112104,25 @@ var HermesAgentProvider = class {
 
 ${user}`;
     const args = splitCliArgsLine(this.cfg.extraArgs);
-    const stdout = await this.invokeHermes(fullPrompt, args, signal);
+    const stdout = await this.invokeHermes(fullPrompt, args, signal, logOptions);
     onProgress?.("Parsing agent response...", 85);
-    return parseAgentTurnResult(stdout, "hermes-agent");
+    return parseAgentTurnResult(stdout, this.cfg.displayName);
   }
-  async invokeHermes(prompt, args, signal) {
+  async invokeHermes(prompt, args, signal, logOptions) {
     if (signal?.aborted) {
+      logOptions?.emit?.({
+        phase: "invoke_aborted",
+        level: "warn",
+        message: "CLI invocation skipped because request is already aborted",
+        timestamp: Date.now()
+      });
       throw new DOMException("Aborted", "AbortError");
     }
     const cliPath = await resolveCliPath(this.cfg.cliPath, "hermes");
     if (signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
     }
+    const cwd = this.cfg.cliWorkingDirectory?.trim();
     return new Promise((resolve, reject) => {
       let settled = false;
       let onAbort = null;
@@ -112220,6 +112132,13 @@ ${user}`;
         settled = true;
         reject(err);
       };
+      logOptions?.emit?.({
+        phase: "invoke_start",
+        level: "info",
+        message: `Running ${this.cfg.displayName}: ${cliPath}${args.length ? ` (+${args.length} extra arg(s))` : ""}`,
+        details: cwd ? `cwd=${cwd}` : "cwd=(default)",
+        timestamp: Date.now()
+      });
       const child = (0, import_child_process.execFile)(
         cliPath,
         args,
@@ -112227,7 +112146,8 @@ ${user}`;
           encoding: "utf8",
           timeout: this.cfg.timeoutMs || 12e4,
           maxBuffer: 10 * 1024 * 1024,
-          env: { ...process.env, NO_COLOR: "1" }
+          env: { ...process.env, NO_COLOR: "1" },
+          ...cwd ? { cwd } : {}
         },
         (error, stdout, stderr) => {
           if (signal && onAbort)
@@ -112238,23 +112158,52 @@ ${user}`;
           if (error) {
             const anyErr = error;
             if (anyErr.killed || anyErr.signal === "SIGTERM") {
+              logOptions?.emit?.({
+                phase: "invoke_aborted",
+                level: "warn",
+                message: `${this.cfg.displayName} process aborted`,
+                timestamp: Date.now()
+              });
               reject(new DOMException("Aborted", "AbortError"));
             } else if (anyErr.code === "ENOENT") {
-              reject(new Error(buildCliNotFoundMessage(
+              const notFoundMessage = buildCliNotFoundMessage(
                 "Hermes/custom",
                 cliPath,
                 this.cfg.cliPath?.trim() || "hermes",
                 this.cfg.settingLabel
-              )));
+              );
+              logOptions?.emit?.({
+                phase: "invoke_error",
+                level: "error",
+                message: `${this.cfg.displayName} CLI not found`,
+                details: notFoundMessage,
+                timestamp: Date.now()
+              });
+              reject(new Error(notFoundMessage));
             } else {
+              const tail = stderr || error.message;
+              logOptions?.emit?.({
+                phase: "invoke_error",
+                level: "error",
+                message: `${this.cfg.displayName} failed (code ${anyErr.code ?? "?"})`,
+                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
+                timestamp: Date.now()
+              });
               reject(
                 new Error(
-                  `Hermes CLI error (code ${anyErr.code ?? "?"}): ${stderr || error.message}`
+                  `Hermes CLI error (code ${anyErr.code ?? "?"}): ${tail}`
                 )
               );
             }
             return;
           }
+          logOptions?.emit?.({
+            phase: "invoke_exit",
+            level: "info",
+            message: `${this.cfg.displayName} completed successfully`,
+            details: logOptions?.rawCli ? stdout || "" : sanitizeCliOutput(stdout || "", 400),
+            timestamp: Date.now()
+          });
           resolve(stdout || "");
         }
       );
@@ -112288,6 +112237,7 @@ ${user}`;
   async healthCheck() {
     const args = splitCliArgsLine(this.cfg.healthCheckArgs);
     const cliPath = await resolveCliPath(this.cfg.cliPath, "hermes");
+    const cwd = this.cfg.cliWorkingDirectory?.trim();
     try {
       await new Promise((resolve, reject) => {
         (0, import_child_process.execFile)(
@@ -112297,7 +112247,8 @@ ${user}`;
             encoding: "utf8",
             timeout: 8e3,
             maxBuffer: 1024 * 1024,
-            env: { ...process.env, NO_COLOR: "1" }
+            env: { ...process.env, NO_COLOR: "1" },
+            ...cwd ? { cwd } : {}
           },
           (err) => {
             if (err)
@@ -112318,7 +112269,8 @@ ${user}`;
               encoding: "utf8",
               timeout: 8e3,
               maxBuffer: 1024 * 1024,
-              env: { ...process.env, NO_COLOR: "1" }
+              env: { ...process.env, NO_COLOR: "1" },
+              ...cwd ? { cwd } : {}
             },
             (err) => {
               if (err)
@@ -112404,6 +112356,10 @@ function findCustomRuntime(plugin, id) {
 }
 
 // src/services/agent-runtime/create-agent-provider.ts
+function resolveVaultRoot(plugin) {
+  const adapter = plugin.app?.vault?.adapter;
+  return (typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : "") || void 0;
+}
 function createAgentProvider(plugin, runtimeId) {
   const s = plugin.settings;
   const selected = runtimeId || s.agentRuntimeProvider;
@@ -112416,7 +112372,9 @@ function createAgentProvider(plugin, runtimeId) {
       extraArgs: s.hermesAgentExtraArgs || "",
       timeoutMs: s.hermesAgentTimeoutMs ?? 12e4,
       healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version",
-      settingLabel: "Hermes CLI path"
+      settingLabel: "Hermes CLI path",
+      displayName: "Hermes Agent",
+      cliWorkingDirectory: resolveVaultRoot(plugin)
     });
   }
   if (selected !== CLAUDE_RUNTIME_ID) {
@@ -112427,7 +112385,9 @@ function createAgentProvider(plugin, runtimeId) {
         extraArgs: custom.extraArgs || "",
         timeoutMs: custom.timeoutMs ?? 12e4,
         healthCheckArgs: custom.healthCheckArgs || "--version",
-        settingLabel: "CLI path"
+        settingLabel: "CLI path",
+        displayName: custom.displayName || "Custom runtime",
+        cliWorkingDirectory: resolveVaultRoot(plugin)
       });
     }
   }
@@ -112780,8 +112740,9 @@ ${out}`);
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[OrchestrationService] Unified agent failed:", e);
       onProgress("Complete", 100);
+      const providerLabel = provider instanceof HermesAgentProvider ? provider.cfg.displayName : provider.id;
       return {
-        finalResponse: `**Unified agent error (${provider.id})**
+        finalResponse: `**Unified agent error (${providerLabel})**
 
 ${msg}`,
         phase: "SYNTHESIS_COMPLETE"
@@ -115348,12 +115309,11 @@ relationshipTypes: []
 
 // src/services/schema-bootstrap-service.ts
 var SchemaBootstrapService = class {
-  constructor(app, getEntityBasePath) {
+  constructor(app) {
     this.app = app;
-    this.getEntityBasePath = getEntityBasePath;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian31.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
+    const root = (0, import_obsidian31.normalizePath)(OSINT_COPILOT_VAULT_ROOT);
     for (const def of SCHEMA_VAULT_DEFAULT_FILES) {
       const path = (0, import_obsidian31.normalizePath)(`${root}/${def.path}`);
       await createFileIfMissing(this.app, path, def.content);
@@ -115796,11 +115756,9 @@ var EnricherRegistry = class {
 var DEFAULT_SETTINGS = {
   systemPrompt: "You are a vault assistant. Answer questions clearly and concisely based on the provided notes. Cite note paths in-line where useful.",
   maxNotes: 15,
-  entityBasePath: "OSINTCopilot",
   enableGraphFeatures: true,
   autoRefreshGraph: true,
   autoOpenGraphOnEntityCreation: false,
-  advancedGraphMode: true,
   conversationFolder: DEFAULT_CONVERSATION_FOLDER,
   promptsFolder: DEFAULT_PROMPTS_FOLDER,
   activeAgentId: "default",
@@ -115830,8 +115788,6 @@ var DEFAULT_SETTINGS = {
   customAgentRuntimes: [],
   extractionLogVerbosity: "detailed",
   extractionDebugRawCli: false,
-  customCheckpoints: [],
-  themeMode: "system",
   lockedVaultPaths: [],
   activeGraphId: "default",
   graphWorkspaces: [{ id: "default", name: "Default" }],
@@ -116395,8 +116351,9 @@ var VaultAISettingTab = class extends import_obsidian35.PluginSettingTab {
         try {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
+          const providerLabel = provider instanceof HermesAgentProvider ? provider.cfg.displayName : this.runtimeLabel(provider.id);
           new import_obsidian35.Notice(
-            ok ? `${this.runtimeLabel(provider.id)} is reachable.` : "Runtime is not ready. Check its executable path and, where applicable, login, provider, or health-check configuration."
+            ok ? `${providerLabel} is reachable.` : "Runtime is not ready. Check its executable path and, where applicable, login, provider, or health-check configuration."
           );
         } catch (e) {
           new import_obsidian35.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
@@ -116684,6 +116641,12 @@ var VaultAISettingTab = class extends import_obsidian35.PluginSettingTab {
       })
     );
     new import_obsidian35.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian35.Setting(containerEl).setName("Enable graph features").setDesc("Turn on the graph view and its supporting entity/relationship features.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.enableGraphFeatures).onChange(async (value) => {
+        this.plugin.settings.enableGraphFeatures = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian35.Setting(containerEl).setName("Schema families in type pickers").setDesc(
       "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/."
     );
@@ -118138,14 +118101,6 @@ ${ev.details}`;
         this.attachedFiles.splice(i, 1);
         this.renderAttachments();
       });
-    }
-  }
-  appendExtractedText(text) {
-    const currentText = this.inputEl.value;
-    if (currentText) {
-      this.inputEl.value = currentText + "\n\n" + text;
-    } else {
-      this.inputEl.value = text;
     }
   }
   /**
@@ -120053,178 +120008,6 @@ Please review and apply the changes below:`;
       new import_obsidian39.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
-  async handleNormalChat(query) {
-    this.chatHistory.push({
-      role: "assistant",
-      content: "Analyzing query...",
-      progress: { message: "Analyzing query...", percent: 10 }
-    });
-    const assistantIndex = this.chatHistory.length - 1;
-    await this.renderMessages();
-    const updateProgress = (message, percent) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
-      }
-    };
-    const getLastAssistantContentEl = () => {
-      const els = this.messagesContainer.querySelectorAll(
-        ".vault-ai-chat-message.vault-ai-chat-assistant .vault-ai-chat-content"
-      );
-      if (els.length === 0)
-        return null;
-      return els[els.length - 1];
-    };
-    let baseStatusText = "";
-    try {
-      const controller = new AbortController();
-      this.activeAbortControllers.set(assistantIndex, controller);
-      updateProgress("Extracting entities from query...", 15);
-      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query, true);
-      let entityMsg = "No specific entities identified. Searching vault...";
-      if (extractedEntities.length > 0) {
-        const names = extractedEntities.filter((e) => e.name).map((e) => `${e.type}: ${e.name}`).join(", ");
-        entityMsg = `Entities defined (${names}). Searching vault & graph...`;
-      }
-      this.chatHistory[assistantIndex].content = entityMsg;
-      updateProgress("Entities extracted, searching vault...", 30);
-      let notes = this.plugin.retrieveNotes(query);
-      if (notes.length < 3 && extractedEntities.length > 0) {
-        for (const entity of extractedEntities) {
-          if (entity.name) {
-            const extraNotes = this.plugin.retrieveNotes(entity.name);
-            const existingPaths = new Set(notes.map((n) => n.path));
-            for (const note of extraNotes) {
-              if (!existingPaths.has(note.path)) {
-                notes.push(note);
-                existingPaths.add(note.path);
-              }
-            }
-          }
-        }
-      }
-      updateProgress("Checking Knowledge Graph...", 40);
-      let graphContext = "";
-      const graphEntityIds = /* @__PURE__ */ new Set();
-      if (extractedEntities.length > 0) {
-        const addedConnections = /* @__PURE__ */ new Set();
-        for (const extracted of extractedEntities) {
-          if (!extracted.name)
-            continue;
-          const entity = this.plugin.entityManager.findEntityByLabel(extracted.name);
-          if (entity) {
-            const connections = this.plugin.entityManager.getConnectionsForEntity(entity.id);
-            for (const conn of connections) {
-              const source = this.plugin.entityManager.getEntity(conn.fromEntityId);
-              const target = this.plugin.entityManager.getEntity(conn.toEntityId);
-              if (source && target) {
-                const triple = `[${source.label}] (ID:${source.id}) --(${conn.relationship})--> [${target.label}] (ID:${target.id})`;
-                if (!addedConnections.has(triple)) {
-                  graphContext += "- " + triple + "\n";
-                  addedConnections.add(triple);
-                  graphEntityIds.add(source.id);
-                  graphEntityIds.add(target.id);
-                }
-              }
-            }
-          }
-        }
-      }
-      let additionalContext = "";
-      if (graphContext.length > 0) {
-        additionalContext = "Knowledge Graph Connections:\n" + graphContext + "\nIMPORTANT INSTRUCTION: If you use any relationship facts from the 'Knowledge Graph Connections' section above to answer the user's question, you MUST cite the Entity IDs used at the very end of your response. Use this exact format: `[[USED_ENTITY_ID: <ID>]]`. List each used entity ID. Do not output this for note citations, ONLY for graph entities found in the Knowledge Graph section.\n";
-      }
-      if (notes.length === 0 && graphContext.length === 0) {
-        this.chatHistory[assistantIndex].progress = void 0;
-        this.chatHistory[assistantIndex].content = entityMsg + "\n\nNo relevant notes or graph connections found.";
-        this.chatHistory[assistantIndex].notes = [];
-        await this.renderMessages();
-        return;
-      }
-      updateProgress(`Found ${notes.length} notes & ${graphEntityIds.size} related entities...`, 50);
-      baseStatusText = entityMsg + `
-
-Found ${notes.length} relevant notes and ${graphEntityIds.size} graph connections.
-Drafting the answer...
-
-`;
-      this.chatHistory[assistantIndex].content = baseStatusText;
-      this.chatHistory[assistantIndex].notes = notes;
-      await this.renderMessages();
-      updateProgress("Generating response...", 60);
-      const contentEl = getLastAssistantContentEl();
-      let streamed = "";
-      let streamProgress = 60;
-      const onRetry = (attempt, maxAttempts) => {
-        updateProgress(`Network interrupted. Retrying... (${attempt}/${maxAttempts})`, streamProgress);
-        this.chatHistory[assistantIndex].content = baseStatusText + `\u26A0\uFE0F Network interrupted. Retrying... (${attempt}/${maxAttempts})`;
-        void this.renderMessages();
-      };
-      const onDelta = (delta) => {
-        streamed += delta;
-        if (streamProgress < 95) {
-          streamProgress += 0.5;
-          updateProgress("Streaming response...", Math.min(95, streamProgress));
-        }
-        if (contentEl) {
-          import_obsidian39.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
-          const scrollContainer = this.messagesContainer.parentElement;
-          if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-          }
-        }
-      };
-      const result = await this.plugin.askVaultStream(
-        query,
-        onDelta,
-        notes,
-        onRetry,
-        additionalContext,
-        controller.signal,
-        true
-        // useLocal: always use Ollama for local vault synthesis
-      );
-      this.activeAbortControllers.delete(assistantIndex);
-      let finalContent = result.fullAnswer;
-      const usedEntityIds = /* @__PURE__ */ new Set();
-      const idRegex = /\[\[USED_ENTITY_ID:\s*([a-zA-Z0-9-]+)\]\]/g;
-      let match;
-      while ((match = idRegex.exec(finalContent)) !== null) {
-        usedEntityIds.add(match[1]);
-      }
-      finalContent = finalContent.replace(idRegex, "").trim();
-      const usedEntities = [];
-      for (const id of usedEntityIds) {
-        const entity = this.plugin.entityManager.getEntity(id);
-        if (entity) {
-          usedEntities.push({
-            id: entity.id,
-            label: entity.label,
-            type: entity.type
-          });
-        }
-      }
-      this.chatHistory[assistantIndex].content = finalContent;
-      this.chatHistory[assistantIndex].progress = void 0;
-      this.chatHistory[assistantIndex].usedEntities = usedEntities;
-      await this.saveCurrentConversation();
-      await this.renderMessages();
-      try {
-        await this.processGraphFromNotes(assistantIndex, notes, extractedEntities, query);
-      } catch (graphError) {
-        console.error("[OSINT Copilot] Graph generation from vault notes failed:", graphError);
-      }
-    } catch (error) {
-      console.error("Chat error:", error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.chatHistory[assistantIndex].progress = void 0;
-      this.chatHistory[assistantIndex].content = `Error: ${errorMsg}
-
-\u{1F4A1} Tip: Your message was saved. You can try sending it again.`;
-      await this.renderMessages();
-      this.inputEl.value = query;
-    }
-  }
   /**
    * Case-insensitively resolve a raw AI-provided type string to its canonical
    * PascalCase EntityType, or null if no such entity type exists.
@@ -120886,7 +120669,7 @@ var VaultAIPlugin = class extends import_obsidian41.Plugin {
    * conversation folder in Settings doesn't reintroduce that exact scan.
    */
   getReservedEntityFolderNames() {
-    const base = (0, import_obsidian41.normalizePath)(this.settings.entityBasePath.trim() || OSINT_COPILOT_VAULT_ROOT);
+    const base = (0, import_obsidian41.normalizePath)(OSINT_COPILOT_VAULT_ROOT);
     const prefix = `${base}/`;
     const leafName = (path) => {
       const normalized = (0, import_obsidian41.normalizePath)(path.trim());
@@ -120953,19 +120736,19 @@ var VaultAIPlugin = class extends import_obsidian41.Plugin {
     this.customTypesService = new CustomTypesService(this.app);
     await this.customTypesService.initialize();
     try {
-      await new SchemaBootstrapService(this.app, () => this.settings.entityBasePath).ensureDefaultsInstalled();
+      await new SchemaBootstrapService(this.app).ensureDefaultsInstalled();
     } catch (e) {
       console.warn("OSINTCopilot: schema vault bootstrap failed:", e);
     }
     this.entityManager = new EntityManager(
       this.app,
-      this.settings.entityBasePath,
+      OSINT_COPILOT_VAULT_ROOT,
       this.vaultLockService,
       () => this.getReservedEntityFolderNames()
     );
     this.waybackArchiveService = new WaybackArchiveService(this.app);
     this.entityManager.setWaybackArchiveService(this.waybackArchiveService);
-    this.schemaCatalogService = new SchemaCatalogService(this.app, () => this.settings.entityBasePath);
+    this.schemaCatalogService = new SchemaCatalogService(this.app, () => OSINT_COPILOT_VAULT_ROOT);
     this.entityManager.setSchemaCatalogService(this.schemaCatalogService);
     try {
       await this.schemaCatalogService.rebuild();
@@ -120975,9 +120758,6 @@ var VaultAIPlugin = class extends import_obsidian41.Plugin {
     this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
       apiProvider: this.settings.apiProvider,
-      customApiUrl: "",
-      customApiKey: "",
-      customModel: "",
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
       claudeCodeModel: this.settings.claudeCodeModel
     });
@@ -121142,7 +120922,7 @@ var VaultAIPlugin = class extends import_obsidian41.Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path) => {
-      const base = (0, import_obsidian41.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const base = (0, import_obsidian41.normalizePath)(OSINT_COPILOT_VAULT_ROOT);
       const prefix = (0, import_obsidian41.normalizePath)(`${base}/schemas`);
       const p = (0, import_obsidian41.normalizePath)(path);
       return p === prefix || p.startsWith(`${prefix}/`);
@@ -121673,16 +121453,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     if (this.graphApiService) {
       this.graphApiService.setSettings({
         apiProvider: this.settings.apiProvider,
-        customApiUrl: "",
-        customApiKey: "",
-        customModel: "",
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
         claudeCodeModel: this.settings.claudeCodeModel
       });
       this.initLocalCliServices();
     }
     if (this.entityManager) {
-      this.entityManager.setBasePath(this.settings.entityBasePath);
+      this.entityManager.setBasePath(OSINT_COPILOT_VAULT_ROOT);
     }
     if (this.vaultPromptLoader) {
       this.vaultPromptLoader.invalidateAll();
@@ -121866,7 +121643,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault() {
-    const base = (0, import_obsidian41.normalizePath)(this.settings.entityBasePath);
+    const base = (0, import_obsidian41.normalizePath)(OSINT_COPILOT_VAULT_ROOT);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + "/"));
     let updated = 0;
     for (const file of files) {

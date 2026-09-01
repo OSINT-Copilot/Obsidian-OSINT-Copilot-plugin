@@ -4,6 +4,7 @@ import { parseAgentTurnResult } from './parse-agent-turn-json';
 import type { AgentProvider, AgentTurnContext, AgentTurnResult } from './provider-types';
 import { splitCliArgsLine } from './cli-args';
 import { resolveCliPath, buildCliNotFoundMessage } from '../../utils/resolve-binary-path';
+import { sanitizeCliOutput, type ExtractionLogOptions } from '../claude-code-service';
 
 export interface HermesAgentRuntimeConfig {
     cliPath: string;
@@ -18,17 +19,29 @@ export interface HermesAgentRuntimeConfig {
      * ("CLI path") -- the two have different field names, so the caller must say which.
      */
     settingLabel: string;
+    /**
+     * Human-readable name for the runtime this instance backs -- "Hermes Agent" for the built-in
+     * runtime, or the user-configured name for a custom runtime. Used anywhere this provider's
+     * identity is shown/recorded, since `id` is always the shared literal 'hermes-agent' for both.
+     */
+    displayName: string;
+    /**
+     * When set (e.g. Obsidian vault root from `adapter.getBasePath()`), passed as `cwd` to the CLI
+     * process, matching `ClaudeCodeConfig.cliWorkingDirectory`.
+     */
+    cliWorkingDirectory?: string;
 }
 
 export class HermesAgentProvider implements AgentProvider {
     readonly id = 'hermes-agent' as const;
 
-    constructor(private readonly cfg: HermesAgentRuntimeConfig) {}
+    constructor(public readonly cfg: HermesAgentRuntimeConfig) {}
 
     async runTurn(
         ctx: AgentTurnContext,
         signal: AbortSignal | undefined,
         onProgress?: (message: string, percent: number) => void,
+        logOptions?: ExtractionLogOptions,
     ): Promise<AgentTurnResult> {
         onProgress?.('Running Hermes agent (JSON turn)...', 40);
         const system = buildUnifiedAgentSystemPrompt('Hermes Agent');
@@ -36,13 +49,24 @@ export class HermesAgentProvider implements AgentProvider {
         const fullPrompt = `${system}\n\n---\n\n${user}`;
 
         const args = splitCliArgsLine(this.cfg.extraArgs);
-        const stdout = await this.invokeHermes(fullPrompt, args, signal);
+        const stdout = await this.invokeHermes(fullPrompt, args, signal, logOptions);
         onProgress?.('Parsing agent response...', 85);
-        return parseAgentTurnResult(stdout, 'hermes-agent');
+        return parseAgentTurnResult(stdout, this.cfg.displayName);
     }
 
-    private async invokeHermes(prompt: string, args: string[], signal: AbortSignal | undefined): Promise<string> {
+    private async invokeHermes(
+        prompt: string,
+        args: string[],
+        signal: AbortSignal | undefined,
+        logOptions?: ExtractionLogOptions,
+    ): Promise<string> {
         if (signal?.aborted) {
+            logOptions?.emit?.({
+                phase: 'invoke_aborted',
+                level: 'warn',
+                message: 'CLI invocation skipped because request is already aborted',
+                timestamp: Date.now(),
+            });
             throw new DOMException('Aborted', 'AbortError');
         }
         const cliPath = await resolveCliPath(this.cfg.cliPath, 'hermes');
@@ -52,6 +76,7 @@ export class HermesAgentProvider implements AgentProvider {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
+        const cwd = this.cfg.cliWorkingDirectory?.trim();
         return new Promise((resolve, reject) => {
             let settled = false;
             let onAbort: (() => void) | null = null;
@@ -61,6 +86,13 @@ export class HermesAgentProvider implements AgentProvider {
                 reject(err);
             };
 
+            logOptions?.emit?.({
+                phase: 'invoke_start',
+                level: 'info',
+                message: `Running ${this.cfg.displayName}: ${cliPath}${args.length ? ` (+${args.length} extra arg(s))` : ''}`,
+                details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+                timestamp: Date.now(),
+            });
             const child = execFile(
                 cliPath,
                 args,
@@ -69,6 +101,7 @@ export class HermesAgentProvider implements AgentProvider {
                     timeout: this.cfg.timeoutMs || 120_000,
                     maxBuffer: 10 * 1024 * 1024,
                     env: { ...process.env, NO_COLOR: '1' },
+                    ...(cwd ? { cwd } : {}),
                 },
                 (error: Error | null, stdout: string, stderr: string) => {
                     if (signal && onAbort) signal.removeEventListener('abort', onAbort);
@@ -77,23 +110,52 @@ export class HermesAgentProvider implements AgentProvider {
                     if (error) {
                         const anyErr = error as { killed?: boolean; signal?: string; code?: string | number | null };
                         if (anyErr.killed || anyErr.signal === 'SIGTERM') {
+                            logOptions?.emit?.({
+                                phase: 'invoke_aborted',
+                                level: 'warn',
+                                message: `${this.cfg.displayName} process aborted`,
+                                timestamp: Date.now(),
+                            });
                             reject(new DOMException('Aborted', 'AbortError'));
                         } else if (anyErr.code === 'ENOENT') {
-                            reject(new Error(buildCliNotFoundMessage(
+                            const notFoundMessage = buildCliNotFoundMessage(
                                 'Hermes/custom',
                                 cliPath,
                                 this.cfg.cliPath?.trim() || 'hermes',
                                 this.cfg.settingLabel,
-                            )));
+                            );
+                            logOptions?.emit?.({
+                                phase: 'invoke_error',
+                                level: 'error',
+                                message: `${this.cfg.displayName} CLI not found`,
+                                details: notFoundMessage,
+                                timestamp: Date.now(),
+                            });
+                            reject(new Error(notFoundMessage));
                         } else {
+                            const tail = stderr || error.message;
+                            logOptions?.emit?.({
+                                phase: 'invoke_error',
+                                level: 'error',
+                                message: `${this.cfg.displayName} failed (code ${anyErr.code ?? '?'})`,
+                                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
+                                timestamp: Date.now(),
+                            });
                             reject(
                                 new Error(
-                                    `Hermes CLI error (code ${anyErr.code ?? '?'}): ${stderr || error.message}`,
+                                    `Hermes CLI error (code ${anyErr.code ?? '?'}): ${tail}`,
                                 ),
                             );
                         }
                         return;
                     }
+                    logOptions?.emit?.({
+                        phase: 'invoke_exit',
+                        level: 'info',
+                        message: `${this.cfg.displayName} completed successfully`,
+                        details: logOptions?.rawCli ? (stdout || '') : sanitizeCliOutput(stdout || '', 400),
+                        timestamp: Date.now(),
+                    });
                     resolve(stdout || '');
                 },
             );
@@ -132,6 +194,7 @@ export class HermesAgentProvider implements AgentProvider {
     async healthCheck(): Promise<boolean> {
         const args = splitCliArgsLine(this.cfg.healthCheckArgs);
         const cliPath = await resolveCliPath(this.cfg.cliPath, 'hermes');
+        const cwd = this.cfg.cliWorkingDirectory?.trim();
         try {
             await new Promise<void>((resolve, reject) => {
                 execFile(
@@ -142,6 +205,7 @@ export class HermesAgentProvider implements AgentProvider {
                         timeout: 8000,
                         maxBuffer: 1024 * 1024,
                         env: { ...process.env, NO_COLOR: '1' },
+                        ...(cwd ? { cwd } : {}),
                     },
                     (err) => {
                         if (err) reject(err);
@@ -161,6 +225,7 @@ export class HermesAgentProvider implements AgentProvider {
                             timeout: 8000,
                             maxBuffer: 1024 * 1024,
                             env: { ...process.env, NO_COLOR: '1' },
+                            ...(cwd ? { cwd } : {}),
                         },
                         (err) => {
                             if (err) reject(err);

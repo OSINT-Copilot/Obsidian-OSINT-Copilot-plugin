@@ -14,7 +14,7 @@ import {
 } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { ensureFolderExists } from '../utils/vault-bootstrap-fs';
-import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
+import { FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { VaultUnlockModal } from '../modals/vault-unlock-modal';
 import { GraphWorkspaceNameModal } from '../modals/graph-workspace-name-modal';
@@ -1187,28 +1187,6 @@ export class GraphView extends ItemView {
             // Exit connection mode
             this.exitConnectionMode();
         }
-    }
-
-    /**
-     * Open the connection creation modal (full form).
-     */
-    private openConnectionModal(): void {
-        const modal = new ConnectionCreationModal(
-            this.app,
-            this.entityManager,
-            (connectionId?: string) => {
-                // Record connection creation in history and add edge incrementally
-                if (connectionId) {
-                    const connection = this.entityManager.getConnection(connectionId);
-                    if (connection) {
-                        this.historyManager.recordRelationshipCreate(connection);
-                        // Add connection to graph incrementally without full refresh
-                        this.addConnectionToGraph(connection);
-                    }
-                }
-            }
-        );
-        modal.open();
     }
 
     /**

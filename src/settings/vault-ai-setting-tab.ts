@@ -10,6 +10,7 @@ import {
 import { runtimeSettingsVisibility } from "../chat/runtime-settings-visibility";
 import { CLAUDE_RUNTIME_ID, CODEX_RUNTIME_ID, getConfiguredRuntimeOptions, normalizeCustomRuntimeId, type CustomAgentRuntime } from "../services/agent-runtime/runtime-registry";
 import { createAgentProvider } from "../services/agent-runtime/create-agent-provider";
+import { HermesAgentProvider } from "../services/agent-runtime/hermes-agent-provider";
 import { isTaskAgentRunnable } from "../task-agents/task-agent-settings";
 import { ClaudeCodeService } from "../services/claude-code-service";
 import { CodexCliService } from "../services/codex-cli-service";
@@ -465,9 +466,12 @@ export class VaultAISettingTab extends PluginSettingTab {
 					try {
 						const provider = createAgentProvider(this.plugin);
 						const ok = await provider.healthCheck();
+						const providerLabel = provider instanceof HermesAgentProvider
+							? provider.cfg.displayName
+							: this.runtimeLabel(provider.id);
 						new Notice(
 							ok
-								? `${this.runtimeLabel(provider.id)} is reachable.`
+								? `${providerLabel} is reachable.`
 								: "Runtime is not ready. Check its executable path and, where applicable, login, provider, or health-check configuration.",
 						);
 					} catch (e: unknown) {
@@ -877,6 +881,18 @@ export class VaultAISettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl).setName("Graph view").setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable graph features")
+			.setDesc("Turn on the graph view and its supporting entity/relationship features.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableGraphFeatures)
+					.onChange(async (value) => {
+						this.plugin.settings.enableGraphFeatures = value;
+						await this.plugin.saveSettings();
+					}),
+			);
 
 		new Setting(containerEl)
 			.setName("Schema families in type pickers")

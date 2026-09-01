@@ -18,9 +18,6 @@ function fakeService(providerId: 'claude-code' | 'codex'): LocalCliService {
 function configure(api: GraphApiService, apiProvider: 'claude-code' | 'codex'): void {
     api.setSettings({
         apiProvider,
-        customApiUrl: '',
-        customApiKey: '',
-        customModel: '',
     });
 }
 

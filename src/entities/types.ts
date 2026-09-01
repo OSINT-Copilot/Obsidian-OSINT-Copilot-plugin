@@ -50,35 +50,6 @@ export type FTMEntityType =
     | 'Group'
     | 'Domain';
 
-// All available FTM entity type names
-export const FTM_ENTITY_TYPES: FTMEntityType[] = [
-    'Person',
-    'Company',
-    'Organization',
-    'Event',
-    // 'Address', // Removed as per user request
-    'Vehicle',
-    'BankAccount',
-    'CryptoWallet',
-    'OnlineAccount',
-    'Document',
-    'RealEstate',
-    'Sanction',
-    'Sanction',
-    'Passport',
-    'IP',
-    'Malware',
-    'Group',
-    'Domain',
-];
-
-// Relationship types from FTM
-export const FTM_RELATIONSHIP_TYPES: FTMEntityType[] = [
-    'Ownership',
-    'Employment',
-    'Directorship',
-];
-
 export interface EntityConfig {
     color: string;
     properties: string[];

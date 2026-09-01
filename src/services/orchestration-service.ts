@@ -18,6 +18,7 @@ import { executeEnricherTool, executeVaultSkillTool } from '../skills/skill-exec
 import { ENRICHER_INVOCATION_SPACING_MS } from './enrichers/enricher-executor';
 import { enrichToolId, parseEnrichToolId } from './enrichers/enricher-schema';
 import { createAgentProvider } from './agent-runtime/create-agent-provider';
+import { HermesAgentProvider } from './agent-runtime/hermes-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
 import type { CustomVaultOperation } from './custom-vault-operations';
@@ -380,8 +381,13 @@ export class OrchestrationService {
             const msg = e instanceof Error ? e.message : String(e);
             console.error("[OrchestrationService] Unified agent failed:", e);
             onProgress("Complete", 100);
+            // HermesAgentProvider.id is always the shared literal 'hermes-agent' for both the
+            // built-in Hermes runtime and every user-defined custom runtime -- use its cfg's
+            // displayName so the error names the actual configured runtime instead.
+            const providerLabel =
+                provider instanceof HermesAgentProvider ? provider.cfg.displayName : provider.id;
             return {
-                finalResponse: `**Unified agent error (${provider.id})**\n\n${msg}`,
+                finalResponse: `**Unified agent error (${providerLabel})**\n\n${msg}`,
                 phase: "SYNTHESIS_COMPLETE",
             };
         }

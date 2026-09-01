@@ -121,15 +121,10 @@ import { LEGACY_SCHEMA_NAME_ALIASES } from '../services/schema-name-aliases';
 import {
   DEFAULT_SETTINGS,
   type VaultAISettings,
-  type CustomCheckpoint,
 } from '../settings/vault-ai-settings';
 import { VaultAISettingTab } from '../settings/vault-ai-setting-tab';
 import type { IndexedNote } from '../chat/indexed-note';
 import type { ChatHistoryItem } from '../chat/chat-types';
-import {
-  runtimeSettingsVisibility,
-  type RuntimeSettingsVisibility,
-} from '../chat/runtime-settings-visibility';
 import { AskModal } from '../modals/ask-modal';
 import { RenameConversationModal } from '../modals/rename-conversation-modal';
 import { appendVaultOpPreviewBlock, entityHasMapCoordinates } from '../ui/vault-op-previews';
@@ -189,7 +184,7 @@ export default class VaultAIPlugin extends Plugin {
    * conversation folder in Settings doesn't reintroduce that exact scan.
    */
   private getReservedEntityFolderNames(): string[] {
-    const base = normalizePath(this.settings.entityBasePath.trim() || OSINT_COPILOT_VAULT_ROOT);
+    const base = normalizePath(OSINT_COPILOT_VAULT_ROOT);
     const prefix = `${base}/`;
     const leafName = (path: string): string | null => {
       const normalized = normalizePath(path.trim());
@@ -269,7 +264,7 @@ export default class VaultAIPlugin extends Plugin {
     await this.customTypesService.initialize();
 
     try {
-      await new SchemaBootstrapService(this.app, () => this.settings.entityBasePath).ensureDefaultsInstalled();
+      await new SchemaBootstrapService(this.app).ensureDefaultsInstalled();
     } catch (e) {
       console.warn('OSINTCopilot: schema vault bootstrap failed:', e);
     }
@@ -277,13 +272,13 @@ export default class VaultAIPlugin extends Plugin {
     // Initialize graph plugin components
     this.entityManager = new EntityManager(
       this.app,
-      this.settings.entityBasePath,
+      OSINT_COPILOT_VAULT_ROOT,
       this.vaultLockService,
       () => this.getReservedEntityFolderNames(),
     );
     this.waybackArchiveService = new WaybackArchiveService(this.app);
     this.entityManager.setWaybackArchiveService(this.waybackArchiveService);
-    this.schemaCatalogService = new SchemaCatalogService(this.app, () => this.settings.entityBasePath);
+    this.schemaCatalogService = new SchemaCatalogService(this.app, () => OSINT_COPILOT_VAULT_ROOT);
     this.entityManager.setSchemaCatalogService(this.schemaCatalogService);
     try {
       await this.schemaCatalogService.rebuild();
@@ -294,9 +289,6 @@ export default class VaultAIPlugin extends Plugin {
     this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
       apiProvider: this.settings.apiProvider,
-      customApiUrl: '',
-      customApiKey: '',
-      customModel: '',
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
       claudeCodeModel: this.settings.claudeCodeModel,
     });
@@ -496,7 +488,7 @@ export default class VaultAIPlugin extends Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path: string) => {
-      const base = normalizePath(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const base = normalizePath(OSINT_COPILOT_VAULT_ROOT);
       const prefix = normalizePath(`${base}/schemas`);
       const p = normalizePath(path);
       return p === prefix || p.startsWith(`${prefix}/`);
@@ -1039,16 +1031,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     if (this.graphApiService) {
       this.graphApiService.setSettings({
         apiProvider: this.settings.apiProvider,
-        customApiUrl: '',
-        customApiKey: '',
-        customModel: '',
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
         claudeCodeModel: this.settings.claudeCodeModel,
       });
       this.initLocalCliServices();
     }
     if (this.entityManager) {
-      this.entityManager.setBasePath(this.settings.entityBasePath);
+      this.entityManager.setBasePath(OSINT_COPILOT_VAULT_ROOT);
     }
 
     if (this.vaultPromptLoader) {
@@ -1259,7 +1248,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault(): Promise<void> {
-    const base = normalizePath(this.settings.entityBasePath);
+    const base = normalizePath(OSINT_COPILOT_VAULT_ROOT);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + '/'));
     let updated = 0;
     for (const file of files) {
