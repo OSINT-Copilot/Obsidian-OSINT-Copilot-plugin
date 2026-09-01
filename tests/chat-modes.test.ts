@@ -93,6 +93,8 @@ describe('ChatView send routing', () => {
       graphWorkspaces: [{ id: 'default', name: 'Default' }],
       enabledSchemaFamilies: { ...DEFAULT_ENABLED_SCHEMA_FAMILIES },
       oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS },
+      miroAccessToken: '',
+      miroLastBoardInput: '',
     };
 
     plugin.conversationService = {

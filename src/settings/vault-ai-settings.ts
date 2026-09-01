@@ -63,6 +63,8 @@ export interface VaultAISettings {
 	graphWorkspaces: { id: string; name: string }[];
 	enabledSchemaFamilies: EnabledSchemaFamilies;
 	oidsfModalLayers: OIDSFModalLayers;
+	miroAccessToken: string;
+	miroLastBoardInput: string;
 }
 
 export interface CustomCheckpoint {
@@ -121,4 +123,6 @@ export const DEFAULT_SETTINGS: VaultAISettings = {
 	graphWorkspaces: [{ id: "default", name: "Default" }],
 	enabledSchemaFamilies: { ...DEFAULT_ENABLED_SCHEMA_FAMILIES },
 	oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS },
+	miroAccessToken: "",
+	miroLastBoardInput: "",
 };

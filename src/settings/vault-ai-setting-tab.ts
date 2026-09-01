@@ -13,12 +13,14 @@ import { createAgentProvider } from "../services/agent-runtime/create-agent-prov
 import { isTaskAgentRunnable } from "../task-agents/task-agent-settings";
 import { ClaudeCodeService } from "../services/claude-code-service";
 import { CodexCliService } from "../services/codex-cli-service";
+import { miroImportService, MiroImportError } from "../services/miro-import-service";
 import { DEFAULT_SETTINGS } from "./vault-ai-settings";
 import { ensureFolderExists } from "../utils/vault-bootstrap-fs";
 import {
 	DEFAULT_CONVERSATION_FOLDER,
 	DEFAULT_CREDENTIALS_FOLDER,
 	DEFAULT_ENRICHERS_FOLDER,
+	DEFAULT_MIRO_BOARDS_FOLDER,
 	DEFAULT_PROMPTS_FOLDER,
 	DEFAULT_SCRIPTS_FOLDER,
 	DEFAULT_SKILLS_FOLDER,
@@ -798,6 +800,79 @@ export class VaultAISettingTab extends PluginSettingTab {
 					}
 					btn.setButtonText("Test CLI");
 					btn.setDisabled(false);
+				}),
+			);
+
+		new Setting(containerEl).setName("Miro import").setHeading();
+		containerEl.createEl("p", {
+			text: "Import a single Miro board's items and connectors into the vault as a Markdown note so the AI agent can read it. This is a one-time, on-demand import, not a live sync — re-importing the same board overwrites its note.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Miro access token")
+			.setDesc("Personal access token / app token from your Miro account. Stored in plain text in this plugin's own settings.")
+			.addText((text) => {
+				text.inputEl.type = "password";
+				text
+					.setPlaceholder("Miro access token")
+					.setValue(this.plugin.settings.miroAccessToken)
+					.onChange(async (value) => {
+						this.plugin.settings.miroAccessToken = value.trim();
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Board ID or URL")
+			.setDesc("Paste a Miro board URL (e.g. https://miro.com/app/board/uXjVI.../) or a raw board ID.")
+			.addText((text) =>
+				text
+					.setPlaceholder("https://miro.com/app/board/...")
+					.setValue(this.plugin.settings.miroLastBoardInput)
+					.onChange(async (value) => {
+						this.plugin.settings.miroLastBoardInput = value.trim();
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Import board now")
+			.setDesc(`Fetches the board's items and connectors and writes/overwrites a note under ${DEFAULT_MIRO_BOARDS_FOLDER}.`)
+			.addButton((btn) =>
+				btn.setButtonText("Import board now").onClick(async () => {
+					const token = this.plugin.settings.miroAccessToken.trim();
+					const boardInput = this.plugin.settings.miroLastBoardInput.trim();
+					if (!token) {
+						new Notice("Set a Miro access token above first.");
+						return;
+					}
+					if (!boardInput) {
+						new Notice("Enter a Miro board ID or URL first.");
+						return;
+					}
+
+					btn.setDisabled(true);
+					btn.setButtonText("Importing...");
+					try {
+						const snapshot = await miroImportService.fetchBoardSnapshot(boardInput, token);
+						const result = await miroImportService.importBoardToVault(
+							this.plugin.app,
+							DEFAULT_MIRO_BOARDS_FOLDER,
+							snapshot,
+							boardInput,
+						);
+						new Notice(
+							`Imported "${snapshot.board.name || snapshot.board.id}" (${snapshot.items.length} items, ${snapshot.connectors.length} connectors) to ${result.path}${result.overwritten ? " (overwritten)" : ""}.`,
+							8000,
+						);
+					} catch (e) {
+						const msg = e instanceof MiroImportError ? e.message : e instanceof Error ? e.message : String(e);
+						new Notice(`Miro import failed: ${msg}`, 10000);
+					} finally {
+						btn.setDisabled(false);
+						btn.setButtonText("Import board now");
+					}
 				}),
 			);
 

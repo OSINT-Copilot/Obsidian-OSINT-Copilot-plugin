@@ -9,6 +9,8 @@ export const OSINT_COPILOT_VAULT_ROOT = "OSINTCopilot";
 export const OSINT_COPILOT_CUSTOM_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/custom`;
 
 export const DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversations`;
+/** Imported Miro board snapshots — one .md per board, overwritten in place on re-import. */
+export const DEFAULT_MIRO_BOARDS_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/MiroBoards`;
 export const DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
 export const DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 export const DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
