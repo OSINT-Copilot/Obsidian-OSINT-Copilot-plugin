@@ -100,7 +100,8 @@ interface CytoscapeCore {
     animate(options: Record<string, unknown>, duration?: { duration: number }): void;
 }
 
-declare const cytoscape: (options?: Record<string, unknown>) => CytoscapeCore;
+import cytoscapeLib from 'cytoscape';
+const cytoscape = cytoscapeLib as unknown as (options?: Record<string, unknown>) => CytoscapeCore;
 
 type RearrangeLayout = 'decentralized' | 'circle' | 'spectral';
 
@@ -345,34 +346,12 @@ export class GraphView extends ItemView {
             });
             errorMsg.setCssProps({ 'margin-bottom': '15px' });
 
-            // Common issues and solutions
-            const solutions = errorDiv.createDiv();
-            solutions.setCssProps({ 'text-align': 'left', 'max-width': '600px', margin: '0 auto' });
-
-            solutions.createEl('p').createEl('strong', { text: 'Possible causes:' });
-            const ul = solutions.createEl('ul');
-            const li1 = ul.createEl('li');
-            li1.createEl('strong', { text: 'CDN blocked:' });
-            li1.appendText(' Cytoscape.js cannot be loaded from unpkg.com CDN. Check:');
-            const subUl = li1.createEl('ul');
-            subUl.createEl('li', { text: 'Browser extensions (ad blockers, privacy tools)' });
-            subUl.createEl('li', { text: 'Corporate firewall or network restrictions' });
-            subUl.createEl('li', { text: 'Content security policy settings' });
-
-            const li2 = ul.createEl('li');
-            li2.createEl('strong', { text: 'Network issues' });
-            li2.appendText(' Check your internet connection');
-
-            const li3 = ul.createEl('li');
-            li3.createEl('strong', { text: 'Entity manager' });
-            li3.appendText(' Check console for EntityManager initialization errors');
-
-            solutions.createEl('p').createEl('strong', { text: 'To debug:' });
-            const ol = solutions.createEl('ol');
-            ol.createEl('li', { text: 'Open Developer Tools (Ctrl+Shift+I)' });
-            ol.createEl('li', { text: 'Check console tab for errors' });
-            ol.createEl('li', { text: 'Check network tab for failed requests to unpkg.com' });
-            ol.createEl('li', { text: 'Verify plugin settings: enableGraphFeatures should be enabled' });
+            // The CDN-diagnostics panel that stood here is gone: Cytoscape is bundled
+            // now, so "unpkg blocked by your firewall" is no longer a way this can fail.
+            const hint = errorDiv.createEl('p', {
+                text: 'Check the developer console for details, and verify that graph features are enabled in settings.',
+            });
+            hint.setCssProps({ 'margin-top': '10px', color: 'var(--text-muted)' });
 
             new Notice('Graph failed to load. Check console for details.', 10000);
         }
@@ -597,43 +576,16 @@ export class GraphView extends ItemView {
     }
 
     /**
-     * Load Cytoscape.js library.
+     * Cytoscape is bundled, not fetched.
+     *
+     * It used to be injected as a <script src="https://unpkg.com/..."> at runtime,
+     * which meant the graph was dead on an air-gapped or firewalled machine -- a real
+     * defect for an OSINT tool, and one the app apologised for in a 40-line
+     * diagnostics panel. It is also incompatible with a CSP worth having: our
+     * script-src is 'self'. Kept async so callers need no change.
      */
     private async loadCytoscape(): Promise<void> {
-        // Check if already loaded
-        if (typeof cytoscape !== 'undefined') {
-            console.debug('[GraphView] Cytoscape.js already loaded');
-            return;
-        }
-
-        // Load from CDN
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js';
-
-            const timeout = setTimeout(() => {
-                reject(new Error('Cytoscape.js load timeout - CDN request took too long. Check network connection or firewall settings.'));
-            }, 30000); // 30 second timeout
-
-            script.onload = () => {
-                clearTimeout(timeout);
-                // Double-check that cytoscape is actually available
-                if (typeof cytoscape === 'undefined') {
-                    reject(new Error('Cytoscape script loaded but cytoscape object is undefined. Possible CSP or script execution issue.'));
-                } else {
-                    console.debug('[GraphView] Cytoscape.js loaded from CDN');
-                    resolve();
-                }
-            };
-
-            script.onerror = (error) => {
-                clearTimeout(timeout);
-                console.error('[GraphView] Failed to load Cytoscape.js from CDN:', error);
-                reject(new Error('Failed to load Cytoscape.js from CDN. Possible causes: network issue, firewall blocking unpkg.com, or Content Security Policy restrictions.'));
-            };
-
-            document.head.appendChild(script);
-        });
+        return Promise.resolve();
     }
 
     /**

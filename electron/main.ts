@@ -6,11 +6,29 @@
  * port goes wrong, and this app spawns local binaries, runs user-authored HTTP
  * enrichers, and renders LLM output as Markdown. Nothing here loosens later.
  */
-import { app, BrowserWindow, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol, session, shell } from 'electron';
 import * as path from 'path';
+import { readFileSync, writeFileSync } from 'fs';
+import { readFile, realpath } from 'fs/promises';
+import * as vaultFs from '../src/host/node/vault';
 import { platformSnapshotArg, registerHostHandlers } from './ipc';
 
 const RENDERER_DIR = path.join(__dirname, 'renderer');
+
+/**
+ * Remote-tile preference, read once at startup because the CSP is fixed for the
+ * session. Lives in userData rather than the vault: it is a privacy setting about
+ * this machine, not investigation data. `--allow-remote-tiles` overrides for a run.
+ */
+function readTilePreference(): boolean {
+    if (process.argv.includes('--allow-remote-tiles')) return true;
+    try {
+        const file = path.join(app.getPath('userData'), 'preferences.json');
+        return JSON.parse(readFileSync(file, 'utf-8')).allowRemoteTiles === true;
+    } catch {
+        return false;
+    }
+}
 
 /** `--vault=<dir>` opens a vault directly, bypassing the picker (used by tests/CI). */
 function vaultArg(): string[] {
@@ -19,18 +37,25 @@ function vaultArg(): string[] {
 }
 
 /**
- * connect-src 'none' is the load-bearing directive: all network egress goes
- * through IPC to main, so a markdown-injection XSS in LLM or enricher output
- * cannot exfiltrate the vault. img-src will gain osint-vault: in Phase 4.
+ * connect-src 'none' is the load-bearing directive: all network egress goes through
+ * IPC to main, so a markdown-injection XSS in LLM or enricher output cannot
+ * exfiltrate the vault.
+ *
+ * Remote map tiles are the one deliberate hole, and they are OFF by default. Turning
+ * them on widens img-src to https:, which for an OSINT tool is a real disclosure
+ * decision -- every pan and zoom tells a tile server which coordinates an analyst is
+ * looking at. That is the user's call to make explicitly, not a silent default.
  */
-const CSP = [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self'",
-    "connect-src 'none'",
-].join('; ');
+function buildCsp(allowRemoteTiles: boolean): string {
+    return [
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        `img-src 'self' data: blob: osint-vault:${allowRemoteTiles ? ' https:' : ''}`,
+        "font-src 'self'",
+        "connect-src 'none'",
+    ].join('; ');
+}
 
 function createWindow(): BrowserWindow {
     const win = new BrowserWindow({
@@ -127,14 +152,23 @@ function createWindow(): BrowserWindow {
     return win;
 }
 
+/**
+ * Must run BEFORE app.whenReady(); registering later is silently ignored.
+ * Backs vault.getResourcePath, used for entity image thumbnails on graph nodes.
+ */
+protocol.registerSchemesAsPrivileged([
+    { scheme: 'osint-vault', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+
 void app.whenReady().then(() => {
     registerHostHandlers();
 
+    const csp = buildCsp(readTilePreference());
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
-                'Content-Security-Policy': [CSP],
+                'Content-Security-Policy': [csp],
             },
         });
     });
@@ -142,12 +176,95 @@ void app.whenReady().then(() => {
     // No renderer should ever be granted a device/media permission.
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
+    registerVaultProtocol();
+    buildAppMenu();
     createWindow();
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
 });
+
+/**
+ * Serves vault files to the renderer.
+ *
+ * The path arrives from entity.properties.filePath, which is LLM-writable, so it is
+ * resolved and checked against the vault root here -- the renderer is the untrusted
+ * side and cannot be trusted to have done it.
+ */
+function registerVaultProtocol(): void {
+    protocol.handle('osint-vault', async (request) => {
+        try {
+            const url = new URL(request.url);
+            const vaultPath = decodeURIComponent(`${url.hostname}${url.pathname}`);
+            const absolute = vaultFs.absolutePathOf(vaultPath);   // throws if it escapes
+            const real = await realpath(absolute);
+            if (!real.startsWith(await realpath(vaultFs.basePath()))) {
+                return new Response('Forbidden', { status: 403 });
+            }
+            return new Response(await readFile(real));
+        } catch {
+            return new Response('Not found', { status: 404 });
+        }
+    });
+}
+
+/** Minimal app menu; the vault picker and the tile toggle need to be reachable. */
+function buildAppMenu(): void {
+    const allowTiles = readTilePreference();
+    const menu = Menu.buildFromTemplate([
+        {
+            label: 'File',
+            submenu: [
+                { label: 'Open vault…', accelerator: 'CmdOrCtrl+O', click: () => void openVaultPicker() },
+                { type: 'separator' },
+                { role: 'quit' },
+            ],
+        },
+        {
+            label: 'Privacy',
+            submenu: [
+                {
+                    label: 'Allow remote map tiles',
+                    type: 'checkbox',
+                    checked: allowTiles,
+                    click: (item) => {
+                        writeTilePreference(item.checked);
+                        dialog.showMessageBox({
+                            message: 'Restart OSINT Copilot to apply the map tile setting.',
+                            detail: item.checked
+                                ? 'Map tiles will be fetched from OpenStreetMap. Tile servers can see which coordinates you view.'
+                                : 'Map tiles will be blocked. The map will render without a basemap.',
+                        });
+                    },
+                },
+            ],
+        },
+        { role: 'viewMenu' },
+    ]);
+    Menu.setApplicationMenu(menu);
+}
+
+function writeTilePreference(allow: boolean): void {
+    const file = path.join(app.getPath('userData'), 'preferences.json');
+    let current: Record<string, unknown> = {};
+    try {
+        current = JSON.parse(readFileSync(file, 'utf-8'));
+    } catch { /* first write */ }
+    writeFileSync(file, JSON.stringify({ ...current, allowRemoteTiles: allow }, null, 2));
+}
+
+async function openVaultPicker(): Promise<void> {
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!window) return;
+    const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return;
+    writeFileSync(
+        path.join(app.getPath('userData'), 'recent-vault.json'),
+        JSON.stringify({ lastVault: result.filePaths[0] }, null, 2),
+    );
+    window.reload();
+}
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

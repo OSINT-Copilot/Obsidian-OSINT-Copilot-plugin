@@ -11,7 +11,11 @@ import { GeocodingService, GeocodingError } from '../services/geocoding-service'
 
 // Leaflet types (simplified for bundling)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet library types not available
-declare const L: any;
+// Bundled, not CDN-injected: the map must work offline, and script-src is 'self'.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import * as LeafletLib from 'leaflet';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const L: any = LeafletLib;
 
 export const MAP_VIEW_TYPE = 'graph_copilot-map-view';
 
@@ -154,20 +158,9 @@ export class MapView extends ItemView {
     /**
      * Load Leaflet library and CSS.
      */
+    /** Leaflet is bundled; kept async so callers need no change. */
     private async loadLeaflet(): Promise<void> {
-        // Check if already loaded
-        if (typeof L !== 'undefined') return;
-
-        // CSS is now loaded via styles.css
-
-        // Load JS from CDN (scripts are allowed by Obsidian's CSP)
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to load Leaflet'));
-            document.head.appendChild(script);
-        });
+        return Promise.resolve();
     }
 
     /**
