@@ -61,7 +61,6 @@ import {
   ORCHESTRATION_TOOL_DISPLAY_NAMES,
   type OrchestrationProgressMeta,
 } from '../services/orchestration-service';
-import { UpdaterService } from '../services/updater-service';
 import { VaultPromptLoader } from '../services/vault-prompt-loader';
 import { VaultPromptBootstrapService } from '../services/vault-prompt-bootstrap';
 import { TaskAgentRegistry } from '../task-agents/task-agent-registry';
@@ -156,7 +155,6 @@ export default class VaultAIPlugin extends Plugin {
   conversationService!: ConversationService;
   customTypesService!: CustomTypesService;
   orchestrationService!: OrchestrationService;
-  updaterService!: UpdaterService;
   claudeCodeService: ClaudeCodeService | null = null;
   codexCliService: CodexCliService | null = null;
   vaultPromptLoader!: VaultPromptLoader;
@@ -357,7 +355,6 @@ export default class VaultAIPlugin extends Plugin {
     this.orchestrationService = new OrchestrationService(this);
 
     // Initialize Updater Service
-    this.updaterService = new UpdaterService(this);
 
     // Initialize entity manager if graph features are enabled
     // This is done separately from API health check to ensure local features work
@@ -751,10 +748,10 @@ export default class VaultAIPlugin extends Plugin {
       return;
     }
     const system = [
-      "You draft JSON for an OSINT HTTP enricher tool that will run inside Obsidian (plugin HTTP, not a browser tab).",
+      "You draft JSON for an OSINT HTTP enricher tool that runs in the app's main process (not a browser tab).",
       "Return ONLY one JSON object with keys:",
       "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, vaultRelativePath, inputHints, skillInstructions.",
-      "Runtime: Obsidian uses requestUrl (no CORS from app origin). urlTemplate must hit the real API origin — do not rely on browser-only session cookies or front-end-only endpoints.",
+      "Runtime: HTTP is issued from the app's main process (no CORS, no browser session). urlTemplate must hit the real API origin — do not rely on browser-only session cookies or front-end-only endpoints.",
       "allowedDomains must list every hostname used in urlTemplate (API host), not only the documentation site host.",
       "Auth: prefer bearer_vault | header_vault | query_vault with vaultRelativePath (relative path under the vault credentials folder); use bearer_env | header_env | query_env only if appropriate. Never put API keys or secrets in the JSON.",
       "Use {{query}} and {{attachments_context}} in urlTemplate or body when relevant.",
@@ -825,7 +822,7 @@ ${draft.skillInstructions}
 
 Tool id: ${enrichToolId(draft.id)}
 This skill executes the configured HTTP enricher spec in ${enricherPath}.
-Do not tell the user to run raw curl from Obsidian for this API; unified chat should call this tool via enricher_invocations with enricher_id \`${draft.id}\`.
+Do not tell the user to run raw curl for this API; unified chat should call this tool via enricher_invocations with enricher_id \`${draft.id}\`.
 `;
     const confirmMsg = [
       "Is it OK to install this enricher skill into your vault and create or update the files below?",

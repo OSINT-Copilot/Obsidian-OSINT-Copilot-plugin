@@ -30,3 +30,6 @@ error.logs
 
 # Standalone app build output
 dist-app/
+
+# electron-builder output
+release/

@@ -23,7 +23,7 @@ describe('GraphApiService tryExtractTextFromUrl', () => {
 			expect(r.status).toBe(403);
 			expect(r.shortMessage).toContain('HTTP 403');
 			expect(r.longDetail).toBeDefined();
-			expect(r.longDetail).toContain('Obsidian cannot fetch');
+			expect(r.longDetail).toContain('cannot be fetched as a logged-in browser');
 		}
 	});
 
@@ -48,7 +48,7 @@ describe('GraphApiService tryExtractTextFromUrl', () => {
 			headers: {},
 		} as any);
 
-		await expect(service.extractTextFromUrl('https://x/')).rejects.toThrow(/Obsidian cannot fetch/);
+		await expect(service.extractTextFromUrl('https://x/')).rejects.toThrow(/cannot be fetched as a logged-in browser/);
 	});
 });
 
@@ -58,7 +58,7 @@ describe('isLikelyExpectedUrlFetchFailure', () => {
 		expect(isLikelyExpectedUrlFetchFailure('HTTP 401: x')).toBe(true);
 		expect(isLikelyExpectedUrlFetchFailure('Failed to fetch URL (HTTP 500)')).toBe(false);
 		expect(isLikelyExpectedUrlFetchFailure('Failed to fetch URL (HTTP 429)')).toBe(true);
-		expect(isLikelyExpectedUrlFetchFailure('Obsidian cannot fetch this URL')).toBe(true);
+		expect(isLikelyExpectedUrlFetchFailure('HTTP 403: this URL cannot be fetched as a logged-in browser would.')).toBe(true);
 		expect(isLikelyExpectedUrlFetchFailure('Network down')).toBe(false);
 	});
 });

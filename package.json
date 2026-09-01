@@ -1,14 +1,16 @@
 {
   "name": "osint-copilot",
   "version": "2.5.6",
-  "description": "OSINT Copilot for Obsidian - AI-powered Q&A and Report Generation",
-  "main": "main.js",
+  "description": "OSINT Copilot - a local-first investigation workspace for SOC analysts and threat researchers",
+  "main": "dist-app/main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "app:build": "node esbuild.config.mjs app production",
     "app:dev": "node esbuild.config.mjs app watch",
     "app": "npm run app:build && node scripts/launch-app.mjs",
     "app:smoke": "npm run app:build && node scripts/launch-app.mjs --smoke",
+    "dist": "npm run app:build && electron-builder --publish never",
+    "dist:dir": "npm run app:build && electron-builder --dir --publish never",
     "generate:schemas": "node scripts/generate-oidsf-schemas.cjs",
     "build": "npm run generate:schemas && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
@@ -68,5 +70,64 @@
     "markdown-it": "^15.0.1",
     "pdfjs-dist": "4.5.136",
     "yaml": "^2.8.3"
+  },
+  "build": {
+    "appId": "com.probepoint.osint-copilot",
+    "productName": "OSINT Copilot",
+    "copyright": "Copyright (c) Probe Point Analytics",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-app/**/*",
+      "package.json",
+      "!node_modules/**/*",
+      "node_modules/pdfjs-dist/**/*",
+      "node_modules/chokidar/**/*",
+      "node_modules/readdirp/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/pdfjs-dist/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "maintainer": "Probe Point Analytics"
+    }
   }
 }

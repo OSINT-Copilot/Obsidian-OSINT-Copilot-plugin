@@ -179,3 +179,28 @@ describe('Vault: adapter surface', () => {
         expect(await vault.adapter.exists('conv/a.md')).toBe(false);
     });
 });
+
+describe('Vault: parent resolution for top-level paths', () => {
+    it('does not invent a folder per path prefix', async () => {
+        // Regression: lastIndexOf('/') is -1 for a top-level path, so
+        // slice(0, -1) chopped one character and recursed, producing phantom
+        // folders "I", "In", "Inv", ... for "Investigation notes.md".
+        const { vault } = await openVault({ 'Investigation notes.md': '# hi' });
+
+        const folders = vault.getAllLoadedFiles().filter((f) => f instanceof TFolder && f.path !== '/');
+        expect(folders).toEqual([]);
+
+        const file = vault.getAbstractFileByPath('Investigation notes.md');
+        expect(file).toBeInstanceOf(TFile);
+        expect(file!.parent).toBe(vault.root);
+        expect(vault.root.children).toContain(file);
+    });
+
+    it('still nests correctly for real folder paths', async () => {
+        const { vault } = await openVault({ 'a/b/c.md': 'x' });
+        const folders = vault.getAllLoadedFiles()
+            .filter((f) => f instanceof TFolder && f.path !== '/')
+            .map((f) => f.path).sort();
+        expect(folders).toEqual(['a', 'a/b']);
+    });
+});

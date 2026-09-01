@@ -9,6 +9,7 @@ import { installDomExtensions } from '../obsidian-shim/dom/dom-extensions';
 import { App } from '../obsidian-shim/app';
 import { MarkdownView, MARKDOWN_VIEW_TYPE } from '../obsidian-shim/workspace/markdown-view';
 import { Notice } from '../obsidian-shim/ui/notice';
+import { setIcon } from '../obsidian-shim/ui/set-icon';
 import { host } from '../host';
 import VaultAIPlugin from '../../main';
 import { WorkspaceRenderer } from './shell/workspace-view';
@@ -17,6 +18,7 @@ import { Sidebar } from './shell/sidebar';
 import { LinkIndex } from './shell/link-index';
 import { CommandPalette } from './shell/command-palette';
 import { MarkdownEditor } from './shell/editor';
+import { SettingsWindow } from './shell/settings-window';
 
 installDomExtensions();
 
@@ -73,6 +75,11 @@ async function boot(): Promise<void> {
 
     const plugin = new VaultAIPlugin(app as never, MANIFEST as never);
 
+    // app.setting.open() must exist before onload: chat-view wires a settings
+    // shortcut during its own construction.
+    const settings = new SettingsWindow(plugin as never);
+    settings.install(app);
+
     // registerView records a factory on the plugin; hand those to the workspace so
     // setViewState({type}) can construct the real views.
     const originalRegisterView = plugin.registerView.bind(plugin);
@@ -93,6 +100,10 @@ async function boot(): Promise<void> {
     const links = new LinkIndex(app);
     new Sidebar(app, links, sidebar);
     new CommandPalette(app, plugin as never);
+
+    const settingsButton = ribbon.createDiv({ cls: 'ribbon-item clickable-icon', attr: { 'aria-label': 'Settings' } });
+    settingsButton.addEventListener('click', () => settings.open());
+    setIcon(settingsButton, 'settings');
     await links.build();
 
     root.setAttribute('data-boot', 'ready');
@@ -108,6 +119,7 @@ async function boot(): Promise<void> {
         const file = app.vault.getAbstractFileByPath(path);
         if (file) await app.workspace.getLeaf('tab').openFile(file as never);
     };
+    (window as { __openSettings?: () => void }).__openSettings = () => settings.open();
     (window as { __selectPane?: (id: string) => void }).__selectPane = (id: string) => {
         const tabs = document.querySelectorAll('.sidebar-tab');
         const index = { files: 0, search: 1, backlinks: 2 }[id] ?? 0;

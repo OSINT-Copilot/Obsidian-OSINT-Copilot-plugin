@@ -128,6 +128,7 @@ function createWindow(): BrowserWindow {
                         openView && `await window.__openView(${JSON.stringify(openView.slice('--open-view='.length))});`,
                         openFile && `await window.__openFile(${JSON.stringify(openFile.slice('--open-file='.length))});`,
                         pane && `window.__selectPane(${JSON.stringify(pane.slice('--pane='.length))});`,
+                        process.argv.includes('--open-settings') && 'window.__openSettings();',
                     ].filter(Boolean).join('\n');
                     const maybeOpen = script
                         ? win.webContents.executeJavaScript(`(async () => { ${script} })()`)

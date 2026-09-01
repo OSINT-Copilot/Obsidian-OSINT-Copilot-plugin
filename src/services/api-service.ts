@@ -7,9 +7,9 @@
  * - Uses local API at http://localhost:5000 by default for development
  * - Can be configured to use remote API for production
  *
- * NOTE: Uses Obsidian's requestUrl to bypass CORS restrictions in Electron.
+ * NOTE: HTTP goes through the host bridge to the Electron main process, which has
  * The browser's fetch API is blocked by CORS when making requests from
- * the app://obsidian.md origin to external APIs.
+ * no CORS restrictions and no browser session.
  */
 
 import { requestUrl } from 'obsidian';
@@ -48,7 +48,7 @@ export function isLikelyExpectedUrlFetchFailure(message: string): boolean {
     return (
         /^HTTP (401|403)\b/.test(message) ||
         /^Failed to fetch URL \(HTTP (401|403|407|429)\)/.test(message) ||
-        message.includes('Obsidian cannot fetch this URL')
+        message.includes('cannot be fetched as a logged-in browser')
     );
 }
 
@@ -147,7 +147,7 @@ export class GraphApiService {
         const cloudflare = hKeys.some((k) => k.includes('cf-'));
         const webmail = /_task=mail|roundcube|webmail|\/owa\/|zimbra|horde\//i.test(url);
         const parts = [
-            `HTTP ${status}: Obsidian cannot fetch this URL as a logged-in browser would.`,
+            `HTTP ${status}: this URL cannot be fetched as a logged-in browser would.`,
             'The request is sent without your site cookies, so webmail, private portals, and many authenticated links return 401/403.',
         ];
         if (webmail) {

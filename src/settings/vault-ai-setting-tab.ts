@@ -77,47 +77,12 @@ export class VaultAISettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// Plugin Updates Section
-		new Setting(containerEl).setName("Plugin updates").setHeading();
-
+		// Updates are handled by the desktop app's own updater, not by overwriting
+		// plugin files in place: there is no plugin folder to overwrite any more.
+		new Setting(containerEl).setName("About").setHeading();
 		new Setting(containerEl)
-			.setName("Current version: " + this.plugin.manifest.version)
-			.setDesc(
-				"Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.",
-			)
-			.addButton((btn) =>
-				btn
-					.setButtonText("Update plugin")
-					.setCta()
-					.setTooltip("Download and install the latest version from GitHub main branch")
-					.onClick(async () => {
-						const originalText = btn.buttonEl.innerText;
-						btn.setButtonText("Updating...");
-						btn.setDisabled(true);
-
-						new Notice("Updating plugin from GitHub main branch...");
-						try {
-							const success = await this.plugin.updaterService.updateFromMain();
-
-							if (success) {
-								btn.setButtonText("Reloading...");
-								new Notice("Update successful! Reloading plugin...");
-								await this.plugin.updaterService.reloadPlugin();
-							} else {
-								btn.setButtonText("Update failed");
-								btn.setDisabled(false);
-								setTimeout(() => btn.setButtonText(originalText), 3000);
-								new Notice("Failed to download update. Check console for details.");
-							}
-						} catch (error) {
-							console.error("[OSINT Copilot] Update failed:", error);
-							btn.setButtonText("Update failed");
-							btn.setDisabled(false);
-							setTimeout(() => btn.setButtonText(originalText), 3000);
-							new Notice("An error occurred during update.");
-						}
-					}),
-			);
+			.setName("Version " + this.plugin.manifest.version)
+			.setDesc("OSINT Copilot checks for updates automatically and installs them on restart.");
 
 		new Setting(containerEl).setName("Graph note lock").setHeading();
 		new Setting(containerEl)
