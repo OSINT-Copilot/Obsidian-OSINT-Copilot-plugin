@@ -92,28 +92,13 @@ export class WorkspaceLeaf {
     openFile = vi.fn();
 }
 
-export class TFile {
-    path: string;
-    basename: string;
-    constructor() {
-        this.path = '';
-        this.basename = '';
-    }
-}
-
-export class TFolder {
-    path: string;
-    children: unknown[];
-    constructor() {
-        this.path = '';
-        this.children = [];
-    }
-}
-
-/** Minimal path normalizer for unit tests (forward slashes, trim). */
-export function normalizePath(path: string): string {
-    return path.replace(/\\/g, '/').replace(/^\/+/, '').trim();
-}
+// --- Mock inversion (Phase 0 -> Phase 2) ---------------------------------
+// These are no longer stubs: they re-export the real shim implementations, so
+// tests exercise production code. Each symbol moved here is an independently
+// reviewable step; when everything below is a re-export, the `obsidian` alias in
+// vitest.config.ts flips to src/obsidian-shim and this file is deleted.
+export { TAbstractFile, TFile, TFolder } from '../src/obsidian-shim/vault/tfile';
+export { normalizePath } from '../src/obsidian-shim/vault/normalize-path';
 
 export const requestUrl = vi.fn();
 

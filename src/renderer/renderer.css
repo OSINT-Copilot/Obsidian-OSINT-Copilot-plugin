@@ -1,0 +1,10 @@
+/* Phase 0 placeholder. Phase 3 ships theme/tokens.css + the existing styles.css here. */
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #1e1e1e;
+    color: #dcddde;
+    display: grid;
+    place-items: center;
+    height: 100vh;
+}

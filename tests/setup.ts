@@ -2,42 +2,6 @@ import { vi } from 'vitest';
 
 // Obsidian mock is handled via alias in vitest.config.ts pointing to tests/obsidian-mock.ts
 
-// Mock D3
-vi.mock('d3', () => ({
-    select: vi.fn().mockReturnThis(),
-    selectAll: vi.fn().mockReturnThis(),
-    data: vi.fn().mockReturnThis(),
-    enter: vi.fn().mockReturnThis(),
-    append: vi.fn().mockReturnThis(),
-    attr: vi.fn().mockReturnThis(),
-    style: vi.fn().mockReturnThis(),
-    text: vi.fn().mockReturnThis(),
-    on: vi.fn().mockReturnThis(),
-    call: vi.fn().mockReturnThis(),
-    transition: vi.fn().mockReturnThis(),
-    duration: vi.fn().mockReturnThis(),
-    remove: vi.fn().mockReturnThis(),
-    forceSimulation: vi.fn().mockReturnValue({
-        force: vi.fn().mockReturnThis(),
-        on: vi.fn().mockReturnThis(),
-        stop: vi.fn(),
-        alpha: vi.fn().mockReturnThis(),
-        restart: vi.fn(),
-    }),
-    forceLink: vi.fn().mockReturnThis(),
-    forceManyBody: vi.fn().mockReturnThis(),
-    forceCenter: vi.fn().mockReturnThis(),
-    forceX: vi.fn().mockReturnThis(),
-    forceY: vi.fn().mockReturnThis(),
-    drag: vi.fn().mockReturnValue({
-        on: vi.fn().mockReturnThis(),
-    }),
-    zoom: vi.fn().mockReturnValue({
-        on: vi.fn().mockReturnThis(),
-        scaleExtent: vi.fn().mockReturnThis(),
-    }),
-}));
-
 // Mock window properties if needed
 if (typeof window !== 'undefined') {
     Object.defineProperty(window, 'ResizeObserver', {

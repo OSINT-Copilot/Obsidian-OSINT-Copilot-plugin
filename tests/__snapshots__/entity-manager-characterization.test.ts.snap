@@ -1,0 +1,95 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`EntityManager characterization (current behaviour, pre-port) > createConnection writes a connection note and appends to both endpoints > connection-note 1`] = `
+"---
+id: "3a6efd06-2053-4280-b920-ed938edbc6ca"
+type: connection
+relationship: "DIRECTOR_OF"
+fromEntityId: "8297d6a7-2a29-4803-bdfa-5355b4c7e133"
+toEntityId: "f67d9eaf-b1c6-4a07-868b-d7eaca1653f4"
+fromEntity: "[[Lukoil]]"
+toEntity: "[[Vagit Alekperov]]"
+schemaFamily: ftm
+ftmSchema: "DIRECTOR_OF"
+label: "Lukoil → DIRECTOR_OF → Vagit Alekperov"
+---
+
+# Lukoil → DIRECTOR_OF → Vagit Alekperov
+
+## Connection Details
+
+- **From**: [[OSINTCopilot/ftm/Company/Lukoil|Lukoil]]
+- **To**: [[OSINTCopilot/ftm/Person/Vagit Alekperov|Vagit Alekperov]]
+- **Type**: DIRECTOR_OF
+
+## Properties
+
+_No additional properties_
+
+## Notes
+
+<!-- Add additional notes about this connection here -->
+"
+`;
+
+exports[`EntityManager characterization (current behaviour, pre-port) > createFTMEntity writes a note and returns a populated entity > lukoil-note 1`] = `
+"---
+id: "8297d6a7-2a29-4803-bdfa-5355b4c7e133"
+type: Company
+schemaFamily: ftm
+ftmSchema: Company
+label: "Lukoil"
+name: "Lukoil"
+country: "ru"
+---
+
+# Lukoil
+
+## Properties
+
+- **Name**: Lukoil
+- **Country**: ru
+
+## Relationships
+
+<!-- Add relationships using wikilinks: [[Entity Name]] RELATIONSHIP_TYPE [[Target Entity]] -->
+
+## Notes
+
+
+"
+`;
+
+exports[`EntityManager characterization (current behaviour, pre-port) > initialize() creates the vault folder skeleton 1`] = `
+[
+  "OSINTCopilot",
+  "OSINTCopilot/Company",
+  "OSINTCopilot/Connections",
+  "OSINTCopilot/Email",
+  "OSINTCopilot/Event",
+  "OSINTCopilot/Evidence",
+  "OSINTCopilot/Image",
+  "OSINTCopilot/Location",
+  "OSINTCopilot/Person",
+  "OSINTCopilot/Phone",
+  "OSINTCopilot/Text",
+  "OSINTCopilot/Username",
+  "OSINTCopilot/Vehicle",
+  "OSINTCopilot/Website",
+  "OSINTCopilot/graph-yaml",
+]
+`;
+
+exports[`EntityManager characterization (current behaviour, pre-port) > mirrors every entity into graph-yaml > lukoil-yaml 1`] = `
+"# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.
+kind: entity
+id: 8297d6a7-2a29-4803-bdfa-5355b4c7e133
+type: Company
+label: Lukoil
+properties:
+  name: Lukoil
+ftmSchema: Company
+schemaFamily: ftm
+
+"
+`;
