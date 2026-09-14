@@ -44,21 +44,21 @@
 1. **Settings → Community plugins** — disable **Restricted mode** / safe mode so third-party plugins are allowed.
 2. **Browse** — install and enable **BRAT** (TfTHacker).
 3. **Settings → BRAT → Add Beta plugin** — paste:
-  `https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
+  `https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin`
 4. **Settings → Community plugins** — enable **OSINT Copilot**.
 5. BRAT stores files under `.obsidian/plugins/` (folder name may be `osint-copilot` or similar). Ensure `main.js`, `manifest.json`, and `styles.css` are present, then restart if the plugin does not load.
 
 **If BRAT install fails:**
 
 - Re-add the exact repo URL in BRAT:
-`https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
+`https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin`
 - Ensure only one active OSINT Copilot folder is enabled under `.obsidian/plugins/`
 - Verify `main.js`, `manifest.json`, `styles.css` exist directly in that folder
 - Reload/restart Obsidian
 
 ### Method 2: Manual install
 
-1. Download `**main.js`**, `**manifest.json**`, and `**styles.css**` from [GitHub Releases](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases).
+1. Download `**main.js`**, `**manifest.json**`, and `**styles.css**` from [GitHub Releases](https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/releases).
 2. Create **one** folder under `<vault>/.obsidian/plugins/`, e.g. `osint-copilot` or `Obsidian-OSINT-Copilot-plugin`.
 3. Copy the **three files** into that folder (not nested deeper).
 4. **Reload** plugins or restart Obsidian, then enable **OSINT Copilot**.
@@ -66,7 +66,7 @@
 ### Method 3: Build from source
 
 ```bash
-git clone https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin.git
+git clone https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin.git
 cd Obsidian-OSINT-Copilot-plugin
 npm install
 npm run build
@@ -706,7 +706,7 @@ Codex requests do not resume prior Codex CLI sessions. Every request is a fresh,
 
 - **README.md** — Overview, BRAT install, privacy summary  
 - **This guide** — Configuration and features  
-- **GitHub** — [Obsidian-OSINT-Copilot-plugin](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin) issues and releases
+- **GitHub** — [Obsidian-OSINT-Copilot-plugin](https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin) issues and releases
 
 ---
 

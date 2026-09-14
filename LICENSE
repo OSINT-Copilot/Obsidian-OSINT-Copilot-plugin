@@ -1,7 +1,7 @@
-PROBE POINT ANALYTICS SRL - SOURCE AVAILABLE LICENSE
+OSINT COPILOT TEAM - SOURCE AVAILABLE LICENSE
 Version 1.0
 
-Copyright (c) 2024-2025 Probe Point Analytics SRL. All rights reserved.
+Copyright (c) 2024-2025 OSINT Copilot Team. All rights reserved.
 
 ================================================================================
 PREAMBLE
@@ -23,10 +23,9 @@ terms of this license.
 ================================================================================
 
 1.1 "Software" means the OSINT Copilot plugin source code, documentation,
-    associated files, and any updates or modifications provided by Probe Point
-    Analytics SRL.
+    associated files, and any updates or modifications provided by OSINT Copilot Team.
 
-1.2 "Licensor" means Probe Point Analytics SRL, the copyright holder.
+1.2 "Licensor" means OSINT Copilot Team, the copyright holder.
 
 1.3 "You" or "Your" means the individual or legal entity exercising rights
     under this license.
@@ -84,7 +83,7 @@ You a worldwide, royalty-free, non-exclusive, non-transferable license to:
 ================================================================================
 
 The following activities are expressly PROHIBITED without prior written
-authorization from Probe Point Analytics SRL:
+authorization from OSINT Copilot Team:
 
 3.1 COMMERCIAL USE: You may not use the Software, in whole or in part, for any
     Commercial Use as defined in Section 1.4. This prohibition applies to:
@@ -99,9 +98,8 @@ authorization from Probe Point Analytics SRL:
     as defined in Section 1.5 and granted in Section 2.4.
 
     To obtain a commercial license for organizational use, You must either:
-    (i)  Obtain explicit written permission from Probe Point Analytics SRL; or
-    (ii) Purchase the appropriate products or licensing from Probe Point
-         Analytics SRL.
+    (i)  Obtain explicit written permission from OSINT Copilot Team; or
+    (ii) Purchase the appropriate products or licensing from OSINT Copilot Team.
 
 3.2 DISTRIBUTION OF DERIVATIVE WORKS: You may not publish, distribute, share,
     or make publicly available any Derivative Work based on the Software,
@@ -124,14 +122,12 @@ authorization from Probe Point Analytics SRL:
 ================================================================================
 
 4.1 All copies of the Software, whether complete or partial, must retain:
-    (a) The complete copyright notice: "Copyright (c) 2024-2025 Probe Point
-        Analytics SRL. All rights reserved."
+    (a) The complete copyright notice: "Copyright (c) 2024-2025 OSINT Copilot Team. All rights reserved."
     (b) This license in its entirety.
     (c) Any other attribution notices included in the original Software.
 
 4.2 If You use the Software in any permitted manner that involves display or
-    acknowledgment, You must provide appropriate credit to Probe Point
-    Analytics SRL as the original author.
+    acknowledgment, You must provide appropriate credit to OSINT Copilot Team as the original author.
 
 ================================================================================
 5. INTELLECTUAL PROPERTY
@@ -233,8 +229,8 @@ WHICHEVER IS GREATER.
 For licensing inquiries, commercial use permissions, or authorization to create
 derivative works, please contact:
 
-Probe Point Analytics SRL
-Email: contact@probepointanalytics.com
+OSINT Copilot Team
+GitHub: https://github.com/OSINT-Copilot
 
 ================================================================================
 

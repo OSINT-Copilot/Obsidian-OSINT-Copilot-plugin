@@ -124,7 +124,7 @@ export type RetryStatusCallback = (attempt: number, maxAttempts: number, delaySe
 export class GeocodingService {
     private static readonly NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
     private static readonly NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
-    private static readonly USER_AGENT = 'OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-plugin)';
+    private static readonly USER_AGENT = 'OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin)';
     private static readonly REQUEST_TIMEOUT = 10000; // 10 seconds
 
     // Rate limiting: track last request time

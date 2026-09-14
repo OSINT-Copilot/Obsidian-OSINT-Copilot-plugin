@@ -98528,7 +98528,7 @@ var _GeocodingService = class _GeocodingService {
 };
 _GeocodingService.NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 _GeocodingService.NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
-_GeocodingService.USER_AGENT = "OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-plugin)";
+_GeocodingService.USER_AGENT = "OSINTCopilot-Obsidian-Plugin/1.0 (https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin)";
 _GeocodingService.REQUEST_TIMEOUT = 1e4;
 _GeocodingService.MIN_REQUEST_INTERVAL = 1100;
 // 1.1 seconds between requests
@@ -113391,7 +113391,7 @@ var OrchestrationService = _OrchestrationService;
 var import_obsidian20 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
-    this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
+    this.REPO_URL = "https://api.github.com/repos/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/releases/latest";
     this.PLUGIN_FOLDER = ".obsidian/plugins/osint-copilot";
     this.plugin = plugin;
     this.app = plugin.app;
@@ -113465,7 +113465,7 @@ var UpdaterService = class {
    */
   async updateFromMain() {
     try {
-      const baseUrl = "https://raw.githubusercontent.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/main";
+      const baseUrl = "https://raw.githubusercontent.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/main";
       const filesToDownload = ["main.js", "manifest.json", "styles.css"];
       let success = true;
       for (const fileName of filesToDownload) {

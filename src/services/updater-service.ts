@@ -13,7 +13,7 @@ interface GitHubAsset {
 export class UpdaterService {
     private plugin: Plugin;
     private app: App;
-    private readonly REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
+    private readonly REPO_URL = "https://api.github.com/repos/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/releases/latest";
 
     private readonly PLUGIN_FOLDER = ".obsidian/plugins/osint-copilot";
 
@@ -106,7 +106,7 @@ export class UpdaterService {
      */
     async updateFromMain(): Promise<boolean> {
         try {
-            const baseUrl = "https://raw.githubusercontent.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/main";
+            const baseUrl = "https://raw.githubusercontent.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/main";
             const filesToDownload = ["main.js", "manifest.json", "styles.css"];
             let success = true;
 

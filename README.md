@@ -52,7 +52,7 @@ The plugin helps you:
 2. Install and enable **BRAT** from Community plugins.
 3. **Settings → BRAT → Add Beta plugin**, paste:
    ```
-   https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin
+   https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin
    ```
 4. **Settings → Community plugins** → enable **OSINT Copilot**.
 
@@ -73,7 +73,7 @@ For manual installation, a pre-configured template vault, and full setup steps, 
 
 ## License
 
-**Probe Point Analytics SRL - Source Available License.** See [LICENSE](LICENSE) for full terms.
+**OSINT Copilot Team - Source Available License.** See [LICENSE](LICENSE) for full terms.
 
 ## Credits
 
@@ -81,4 +81,4 @@ Built with inspiration from **obsidian-copilot-plugin**, **obsidian-smart-connec
 
 ## Support
 
-For issues, feature requests, or questions, use [GitHub Issues](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/issues).
+For issues, feature requests, or questions, use [GitHub Issues](https://github.com/OSINT-Copilot/Obsidian-OSINT-Copilot-plugin/issues).

@@ -20,7 +20,7 @@
     "threat-intelligence",
     "soc"
   ],
-  "author": "Probe Point Analytics",
+  "author": "OSINT Copilot Team",
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",
